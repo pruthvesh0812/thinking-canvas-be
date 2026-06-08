@@ -1,0 +1,127 @@
+{
+  "_comments": {
+    "defaultMode": "acceptEdits — Claude writes and edits files without a per-file confirmation prompt. Intentional for a dev-agent workflow: the engineer controls scope through /gatekeeper + /approve before any code is written, so per-file prompts add friction without safety benefit. Change to 'askEdits' if you want a confirmation step before every Write/Edit call.",
+    "hooks": "PreToolUse: guardrail_check.sh runs before every Bash call — applies regex deny/ask patterns and enforces session cost limits ($3 warn / $5 hard stop). Stop: cost_tracker.sh runs once per assistant turn (Stop event) — tries usage.cost_usd, message.usage.cost_usd, then estimates from token counts (Sonnet 4.6 pricing) as fallback. Writes cumulative + per-turn data to ~/.claude/sessions/{session_id}.json and a .current pointer for /cost lookups. Debug: first few payloads logged to /tmp/claude_cost_debug.log — check there if cost still shows 0.",
+    "permissions_model": "deny = blocked outright, no override. ask = Claude pauses and requires engineer confirmation before proceeding. allow = whitelisted, no prompt shown. Patterns in settings.json are matched literally. Regex-based checks that settings.json cannot express are in guardrail_check.sh."
+  },
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf /*)",
+      "Bash(sudo *)",
+      "Bash(su root)",
+      "Bash(chmod -R 777 *)",
+      "Bash(dd if=* of=/dev/*)",
+      "Bash(mkfs.*)",
+      "Bash(shred *)",
+      "Bash(git push --force origin main)",
+      "Bash(git push --force origin master)",
+      "Bash(git push -f origin main)",
+      "Bash(git push -f origin master)",
+      "Bash(git push --force-with-lease origin main)",
+      "Bash(git push --force-with-lease origin master)",
+      "Bash(cat ~/.aws/credentials)",
+      "Bash(cat ~/.aws/config)",
+      "Bash(cat ~/.ssh/id_rsa)",
+      "Bash(cat ~/.ssh/id_ed25519)",
+      "Bash(cat ~/.ssh/id_ecdsa)",
+      "Bash(printenv)",
+      "Bash(env)",
+      "Bash(rm -rf ~)",
+      "Bash(rm -rf ~/)",
+      "Bash(rm --no-preserve-root *)",
+      "Bash(su -)",
+      "Bash(chown root:root *)",
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Bash(brew install *)",
+      "Bash(./gradlew wrapper --gradle-version *)",
+      "Bash(./gradlew dependencies --write-locks)",
+      "Bash(DROP TABLE *)",
+      "Bash(DROP DATABASE *)",
+      "Bash(kubectl delete namespace *)",
+      "Bash(kubectl delete cluster *)",
+      "Bash(docker rm -f $(docker ps -aq))",
+      "Bash(docker rmi -f $(docker images -q))"
+    ],
+    "ask": [
+      "Bash(rm -rf *)",
+      "Bash(rm -r *)",
+      "Bash(git push *)",
+      "Bash(git reset --hard *)",
+      "Bash(git rebase *)",
+      "Bash(docker system prune *)",
+      "Bash(kubectl delete *)",
+      "Bash(./gradlew clean build -x test *)"
+    ],
+    "allow": [
+      "Bash(./gradlew build)",
+      "Bash(./gradlew build -x test)",
+      "Bash(./gradlew test)",
+      "Bash(./gradlew test --tests *)",
+      "Bash(./gradlew bootRun)",
+      "Bash(./gradlew compileJava)",
+      "Bash(./gradlew compileTestJava)",
+      "Bash(./gradlew check)",
+      "Bash(./gradlew dependencies)",
+      "Bash(./gradlew dependencyCheckAnalyze)",
+      "Bash(./gradlew tasks)",
+      "Bash(./gradlew :test --info)",
+      "Bash(docker build *)",
+      "Bash(docker images *)",
+      "Bash(docker ps *)",
+      "Bash(trivy image *)",
+      "Bash(trivy fs *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)",
+      "Bash(git fetch *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)",
+      "Bash(grep *)",
+      "Bash(grep -r *)",
+      "Bash(grep -rn *)",
+      "Bash(find . -name *)",
+      "Bash(find . -type *)",
+      "Bash(find . -path *)",
+      "Bash(cat src/*)",
+      "Bash(ls *)",
+      "WebFetch(domain:docs.spring.io)",
+      "WebFetch(domain:docs.gradle.org)",
+      "WebFetch(domain:mvnrepository.com)",
+      "WebFetch(domain:nvd.nist.gov)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebSearch"
+    ]
+  },
+  "defaultMode": "acceptEdits",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/guardrail_check.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/cost_tracker.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "_schema": {
+    "id": "YYYYMMDD-N (date of discovery + sequence number)",
+    "feature": "feature directory name under .claude/features/",
+    "date": "YYYY-MM-DD",
+    "gap_type": "missing | vague | contradictory | undocumented_pattern",
+    "gap": "One sentence: what guidance was absent or unclear",
+    "doc": ".claude/context/<filename>.md",
+    "section": "Section heading inside that doc where the change belongs",
+    "proposed_change": "One sentence: what was added or corrected in the doc",
+    "severity": "high | medium | low",
+    "status": "proposed | applied | rejected"
+  },
+  "entries": [
+    {
+      "id": "20260506-1",
+      "feature": "sdk-delivery-filter",
+      "date": "2026-05-06",
+      "gap_type": "missing",
+      "gap": "CODING-STANDARDS.md did not state that filter/gate service methods calling a repository must catch exceptions and return a safe default — an unhandled exception silently aborts the entire delivery pipeline.",
+      "doc": ".claude/context/CODING-STANDARDS.md",
+      "section": "1. Spring Boot Layer Conventions → Services",
+      "proposed_change": "Added rule: filter/gate services must wrap repository calls in try/catch and return the fail-open default (true for ALLOW filters) on exception, with error logging.",
+      "severity": "high",
+      "status": "proposed"
+    }
+  ]
+}
