@@ -1,26 +1,32 @@
 {
-  "name": "thinking-canvas",
+  "name": "thinking-canvas-api",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "migrate": "supabase db push",
+    "gen:types": "supabase gen types typescript --local > src/db/database.types.ts",
+    "inngest:dev": "npx inngest-cli@latest dev"
   },
   "dependencies": {
-    "next": "16.2.6",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "@ai-sdk/google": "latest",
+    "@mastra/core": "latest",
+    "@upstash/redis": "latest",
+    "@supabase/supabase-js": "latest",
+    "hono": "latest",
+    "inngest": "latest",
+    "stripe": "latest",
+    "zod": "latest",
+    "langfuse": "latest"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.6",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsx": "latest",
+    "typescript": "^5",
+    "vitest": "latest",
+    "@types/node": "^20"
   }
 }
