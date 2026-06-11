@@ -8,7 +8,7 @@ status: draft
 ---
 
 ## Scope
-Implement Expander, Stress-Tester, and Articulator — the three content agents that stream responses. All use `gemini-3.1-flash-lite` with auto thinking.
+Implement Expander, Stress-Tester, and Articulator — the three content agents that stream responses. All use `models.content()` (gemini-2.5-flash-lite) from `src/lib/llm.ts`, thinking OFF.
 
 ## Files to Touch
 ```
@@ -21,7 +21,7 @@ CREATE:
 ## Expander agent
 
 ```typescript
-// Model: gemini-3.1-flash-lite, thinking auto
+// Model: models.content() (gemini-2.5-flash-lite), thinking OFF
 // Tools: get_window, traverse_trail, semantic_promote
 // Trigger: node created in diverge phase (most common agent)
 // Output: 1 reframe|mirror|pattern|reference|contradiction|appreciation + 1 question (usually)
@@ -35,7 +35,7 @@ CREATE:
 ## Stress-Tester agent
 
 ```typescript
-// Model: gemini-3.1-flash-lite, thinking auto
+// Model: models.content() (gemini-2.5-flash-lite), thinking OFF
 // Tools: get_branch, semantic_promote
 // Trigger: phase switches to converging + node created
 // Output: finds gaps, weak assumptions, contradictions in current thinking
@@ -45,7 +45,7 @@ CREATE:
 ## Articulator agent
 
 ```typescript
-// Model: gemini-3.1-flash-lite, thinking auto
+// Model: models.content() (gemini-2.5-flash-lite), thinking OFF
 // Tools: traverse_trail, get_path, get_content
 // Trigger: edge drawn between two existing nodes (both_existing=true, not question)
 // Stateless — no thread history, just the two endpoint nodes + edge context
@@ -67,7 +67,7 @@ Fetch https://mastra.ai/llms.txt for current Agent API. Load `.ai/skills/create-
 task-01 (Attunement output type shapes), `cursor-tools` story both tasks (tools imported here).
 
 ## Definition of Done
-- [ ] All 3 agents use `gemini-3.1-flash-lite` with no explicit thinking config (auto)
+- [ ] All 3 agents use `models.content()` from `src/lib/llm.ts` (gemini-2.5-flash-lite), thinking OFF
 - [ ] System prompts are constants
 - [ ] Articulator is stateless — receives only the two endpoint nodes, no thread history
 - [ ] All agents use `agent.stream()` interface (not `agent.generate()`)

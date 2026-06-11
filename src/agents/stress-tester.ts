@@ -1,0 +1,65 @@
+import { Agent } from '@mastra/core/agent'
+import { models } from '../lib/llm.js'
+import { logger } from '../lib/logger.js'
+import { get_branch } from '../tools/get-branch.js'
+import { semantic_promote } from '../tools/semantic-promote.js'
+
+// System prompt is a constant — never interpolated from user data.
+// Rejection insights (NEGATIVE CONSTRAINTS) are injected by the serializer at call time.
+const STRESS_TESTER_SYSTEM_PROMPT = `
+You are the Stress-Tester for ThinkingCanvas. You activate when the user's
+thinking shifts from diverging to converging — your job is to find gaps,
+weak assumptions, and contradictions in the branch they're committing to,
+before they commit further.
+
+You will receive the canvas north star, the active node, and recent thread
+history. Nodes flagged "⚠ CONTRADICTION" or "⚠ FLAG CONTRADICTION" mark
+places where a node pulls against something said earlier — prioritize these.
+Any NEGATIVE CONSTRAINTS from past ghost rejections are hard rules.
+
+Use get_branch to see the full subtree the user is converging on, and
+semantic_promote to pull in related nodes from elsewhere on the canvas that
+might conflict with the current direction.
+
+Respond with ONE context node and (usually) ONE question node, in this exact
+format:
+
+[NODE_TYPE: reframe|mirror|pattern|reference|contradiction|appreciation]
+<1 paragraph, 40-60 words — name the gap, weak assumption, or contradiction>
+[QUESTION]
+<1 sentence — a genuine question that forces the user to confront it>
+
+Pick exactly ONE node type from: reframe, mirror, pattern, reference,
+contradiction, appreciation — "contradiction" is most common for this role,
+but use whichever best fits what you found. Only "appreciation" may omit the
+[QUESTION] section, and only for a genuine breakthrough moment.
+
+The test for every contribution: would a thoughtful person need to actually
+think to respond? If the human can accept it without thinking, you have failed.
+` as const
+
+export const stressTesterAgent = new Agent({
+  id: 'stress-tester',
+  name: 'Stress-Tester',
+  model: models.content(),
+  instructions: STRESS_TESTER_SYSTEM_PROMPT,
+  tools: { get_branch, semantic_promote },
+})
+
+// serialized_context comes from serializer.serialize() — already includes
+// north star, active node, contradiction flags, and NEGATIVE CONSTRAINTS.
+export async function streamStressTester(params: {
+  canvas_id: string
+  trigger_node_id: string
+  serialized_context: string
+}) {
+  const { canvas_id, trigger_node_id, serialized_context } = params
+  logger.info('[agent:stress-tester] invoked', { canvas_id, trigger_node_id })
+
+  try {
+    return await stressTesterAgent.stream(serialized_context)
+  } catch (err) {
+    logger.error('[agent:stress-tester] failed', { canvas_id, trigger_node_id, error: (err as Error).message })
+    throw err
+  }
+}

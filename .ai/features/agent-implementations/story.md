@@ -20,26 +20,28 @@ Agents are the core intelligence layer. The pipeline functions (Story 9) call th
 ## Files to Touch
 ```
 CREATE:
-  src/agents/attunement.ts         → gemini-2.5-flash, thinking:OFF
-  src/agents/orchestrator.ts       → gemini-2.5-flash, thinking:OFF
-  src/agents/expander.ts           → gemini-3.1-flash-lite, auto thinking
-  src/agents/stress-tester.ts      → gemini-3.1-flash-lite, auto thinking
-  src/agents/articulator.ts        → gemini-3.1-flash-lite, auto thinking
-  src/agents/observer.ts           → gemini-3.1-flash-lite, thinking:high (-1)
-  src/agents/outer-subconscious.ts → gemini-3.1-flash-lite, thinking:high (-1)
+  src/agents/attunement.ts         → models.fast() (gemini-2.5-flash), thinking OFF
+  src/agents/orchestrator.ts       → models.fast() (gemini-2.5-flash), thinking OFF
+  src/agents/expander.ts           → models.content() (gemini-2.5-flash-lite), thinking OFF
+  src/agents/stress-tester.ts      → models.content() (gemini-2.5-flash-lite), thinking OFF
+  src/agents/articulator.ts        → models.content() (gemini-2.5-flash-lite), thinking OFF
+  src/agents/observer.ts           → models.fast() + providerOptions: { google: models.thinking('high') }
+  src/agents/outer-subconscious.ts → models.fast() + providerOptions: { google: models.thinking('high') }
 ```
 
-## Agent Model Routing (from ARCHITECTURE.md)
+## Agent Model Routing (from LLM-LAYER.md — authoritative; supersedes ARCHITECTURE.md)
 
-| Agent | Model | thinkingBudget | Tools |
+| Agent | Model | Thinking | Tools |
 |---|---|---|---|
-| Attunement | gemini-2.5-flash | 0 (OFF) | none |
-| Orchestrator | gemini-2.5-flash | 0 (OFF) | none |
-| Expander | gemini-3.1-flash-lite | auto | get_window, traverse_trail, semantic_promote |
-| Stress-Tester | gemini-3.1-flash-lite | auto | get_branch, semantic_promote |
-| Articulator | gemini-3.1-flash-lite | auto | traverse_trail, get_path, get_content |
-| Observer | gemini-3.1-flash-lite | -1 (high) | get_big_picture, get_content, traverse_trail, get_siblings |
-| Outer Sub | gemini-3.1-flash-lite | -1 (high) | get_content |
+| Attunement | models.fast() (gemini-2.5-flash) | OFF | none |
+| Orchestrator | models.fast() (gemini-2.5-flash) | OFF | none |
+| Expander | models.content() (gemini-2.5-flash-lite) | OFF | get_window, traverse_trail, semantic_promote |
+| Stress-Tester | models.content() (gemini-2.5-flash-lite) | OFF | get_branch, semantic_promote |
+| Articulator | models.content() (gemini-2.5-flash-lite) | OFF | traverse_trail, get_path, get_content |
+| Observer | models.fast() (gemini-2.5-flash) | thinking('high') via providerOptions | get_big_picture, get_content, traverse_trail, get_siblings |
+| Outer Sub | models.fast() (gemini-2.5-flash) | thinking('high') via providerOptions | get_content |
+
+All model instantiation goes through `src/lib/llm.ts` (non-negotiable #12) — never `google(...)` directly in agent files.
 
 ## System Prompt Rules (from CODING-STANDARDS.md)
 
@@ -79,8 +81,8 @@ No.
 
 ## Risks
 - Fetch https://mastra.ai/llms.txt before implementing to confirm current Agent API surface
-- `gemini-3.1-flash-lite` is the correct model string — NOT `gemini-flash-lite-preview` (deprecated May 2026)
-- Observer and Outer Sub must use `thinkingBudget: -1` (high) — not `thinkingBudget: 1`
+- Model routing must come from `src/lib/llm.ts` (`models.fast()` / `models.content()` / `models.thinking()`) per `LLM-LAYER.md` — do not call `google(...)` directly in agent files
+- Observer and Outer Sub use `models.fast()` + `providerOptions: { google: models.thinking('high') }` (thinkingBudget 8000) passed at call-site — not baked into the model instance
 
 ## Task Breakdown
 - **task-01:** Attunement + Orchestrator (infrastructure — no streaming, structured output)
