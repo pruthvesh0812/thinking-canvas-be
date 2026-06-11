@@ -155,6 +155,20 @@ Three screens, human-triggered (never automatic):
 
 ---
 
+## Atomic DB Operations
+
+Three Postgres functions handle values that must be updated based on their current state. Never use read-modify-write in application code for these — concurrent Inngest workers will silently drop each other's writes.
+
+| Function | Table | Why atomic |
+|---|---|---|
+| `append_thread_message(thread_id, message)` | `agent_threads.messages` | Multiple agents share one thread per canvas and append concurrently |
+| `append_node_to_sequence(session_id, node_id)` | `sessions.node_sequence` | Rapid node creation fires simultaneous events; order must be preserved |
+| `decrement_insight_turns(insight_id)` | `rejection_insights.turns_remaining` | Decrement + auto-deactivate must happen in one statement or a turn slips through |
+
+Call via `db.rpc(fn_name, params)`. Never inline the array/JSONB append logic in `src/db/*.ts`.
+
+---
+
 ## Pricing Tiers
 
 | Tier | Agents Available |

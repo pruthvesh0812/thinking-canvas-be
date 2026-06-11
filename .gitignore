@@ -20,6 +20,9 @@
 # production
 /build
 
+# dist
+/dist
+
 # misc
 .DS_Store
 *.pem
@@ -39,3 +42,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# compiled output that occasionally lands outside dist/ on failed builds
+types/*.js
+types/*.d.ts

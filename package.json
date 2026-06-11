@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "test": "vitest",
     "migrate": "supabase db push",
     "gen:types": "supabase gen types typescript --local > src/db/database.types.ts",
@@ -14,19 +14,21 @@
   },
   "dependencies": {
     "@ai-sdk/google": "latest",
+    "@hono/node-server": "^2.0.4",
     "@mastra/core": "latest",
-    "@upstash/redis": "latest",
     "@supabase/supabase-js": "latest",
+    "@upstash/redis": "latest",
     "hono": "latest",
     "inngest": "latest",
+    "langfuse": "latest",
     "stripe": "latest",
-    "zod": "latest",
-    "langfuse": "latest"
+    "zod": "latest"
   },
   "devDependencies": {
+    "@types/node": "^20",
+    "supabase": "^2.105.0",
     "tsx": "latest",
     "typescript": "^5",
-    "vitest": "latest",
-    "@types/node": "^20"
+    "vitest": "latest"
   }
 }
