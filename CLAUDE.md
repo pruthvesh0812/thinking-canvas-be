@@ -30,7 +30,7 @@ Receives canvas events from the frontend, runs the AI agent pipeline, and stream
 | Ghost streaming / SSE / Redis / spawn flag | `CANVAS-SYNC.md` |
 | Rejection Insights Engine | `AGENT-PIPELINE.md` + `CANVAS-SYNC.md` |
 | Multi-Canvas / session model | `CORE-CONCEPTS.md` + `ARCHITECTURE.md` |
-| Database / schema / migrations | `CORE-CONCEPTS.md` + `ARCHITECTURE.md` |
+| Database / schema / migrations | `DATABASE-SCHEMA.md` + `CORE-CONCEPTS.md` |
 | Auth / Stripe / tier enforcement | `ARCHITECTURE.md` |
 | Session Complete / Observer / learnings | `CORE-CONCEPTS.md` + `AGENT-PIPELINE.md` |
 | Model routing / Google AI / embeddings | `LLM-LAYER.md` |
@@ -127,6 +127,7 @@ thinking-canvas-api/
 | Add Inngest pipeline | `src/pipeline/[name].ts` |
 | SSE streaming endpoint | `src/routes/stream.ts` |
 | DB migration | `supabase/migrations/` |
+| Understand a table's fields | `.ai/context/DATABASE-SCHEMA.md` |
 | Shared types | `types/index.ts` |
 | Redis client | `src/lib/redis.ts` |
 | canAgentFire guard | `src/lib/guards.ts` |

@@ -203,6 +203,48 @@ app.post('/api/canvas-event', zValidator('json', canvasEventSchema), async (c) =
 
 ---
 
+## Comments in Complex Functions
+
+Default: **no comments.** Don't restate what well-named code already says.
+
+**Exception — complex functions:** When a function has multiple non-obvious steps or a
+reader would need to hold the whole algorithm in mind to follow it, add a short
+step-label comment before each logical phase. The goal is a scannable map of the
+function — not a line-by-line narration.
+
+```typescript
+// ✅ Step labels for a multi-phase function
+export async function serialize(thread, agentRole, canvas) {
+  // 1. Fetch all referenced nodes + canvas edges + rejection block in parallel
+  const [...] = await Promise.all([...])
+
+  // 2. Build lookup maps (nodeMap, seqMap)
+  ...
+
+  // 3. Classify messages into tiers
+  const tierMap = classifyTiers(thread.messages)
+
+  // 4. Assemble output: north star → session boundary → rejection block → tiers 1-4
+  ...
+}
+
+// ❌ Narration — don't do this
+// Call the database to get the node by its ID
+const node = await getNode(id)
+```
+
+When to add step comments:
+- The function has 3+ distinct logical phases
+- The order of steps matters and isn't obvious from the code
+- A new reader would have to trace the whole function to understand the shape
+
+When NOT to add them:
+- Simple CRUD functions (`getNode`, `createThread`, etc.)
+- Functions whose name + parameter names already tell the full story
+- Short functions (< ~20 lines)
+
+---
+
 ## Prohibited Patterns
 
 ```typescript
