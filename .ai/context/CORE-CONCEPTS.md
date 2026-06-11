@@ -50,16 +50,16 @@ User
 
 | Role | Activation Signal | Job | Model |
 |---|---|---|---|
-| **Expander** | New node in diverge phase | Opens 1-2 cognitive jumps ahead along the trail direction | gemini-3.1-flash-lite |
-| **Stress-Tester** | Phase switches to converging | Finds gaps, weak assumptions, contradictions | gemini-3.1-flash-lite |
-| **Observer** | Continuous + Session Complete | Bird's eye spatial map + drift detection vs north star | gemini-3.1-flash-lite (thinking:high) |
-| **Outer Subconscious** | Question edge drawn (unlabeled) | Cross-domain associative leap across all human knowledge | gemini-3.1-flash-lite (thinking:high) |
-| **Articulator** | Edge drawn between two existing nodes | Completes half-formed connection — 2-3 possible articulations | gemini-3.1-flash-lite |
+| **Expander** | New node in diverge phase | Opens 1-2 cognitive jumps ahead along the trail direction | gemini-2.5-flash-lite (`models.content()`) |
+| **Stress-Tester** | Phase switches to converging | Finds gaps, weak assumptions, contradictions | gemini-2.5-flash-lite (`models.content()`) |
+| **Observer** | Continuous + Session Complete | Bird's eye spatial map + drift detection vs north star | gemini-2.5-flash + thinking:high (`models.fast()` + `models.thinking('high')`) |
+| **Outer Subconscious** | Question edge drawn (unlabeled) | Cross-domain associative leap across all human knowledge | gemini-2.5-flash + thinking:high (`models.fast()` + `models.thinking('high')`) |
+| **Articulator** | Edge drawn between two existing nodes | Completes half-formed connection — 2-3 possible articulations | gemini-2.5-flash-lite (`models.content()`) |
 
 **Infrastructure components (not content agents):**
-- **Attunement Layer** — Classifies cognitive mode before Orchestrator. Model: gemini-2.5-flash (thinking:OFF)
-- **Orchestrator** — Routes to correct agent. Model: gemini-2.5-flash (thinking:OFF)
-- **Rejection Insights Engine** — Processes ghost rejections → negative constraints. Model: gemini-2.5-flash (thinking:low)
+- **Attunement Layer** — Classifies cognitive mode before Orchestrator. Model: gemini-2.5-flash (`models.fast()`, thinking:OFF)
+- **Orchestrator** — Routes to correct agent. Model: gemini-2.5-flash (`models.fast()`, thinking:OFF)
+- **Rejection Insights Engine** — Processes ghost rejections → negative constraints. Model: gemini-2.5-flash (`models.fast()` + `models.thinking('low')`)
 
 ---
 

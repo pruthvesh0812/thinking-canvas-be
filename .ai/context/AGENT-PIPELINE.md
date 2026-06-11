@@ -50,7 +50,7 @@ Inngest worker
   │     │     Apply tiered node-anchored format (per-agent rules)
   │     │     Inject active rejection_insights as NEGATIVE CONSTRAINTS block
   │     │
-  │     ├── Step 7: Agent streams (gemini-3.1-flash-lite)
+  │     ├── Step 7: Agent streams (model per LLM-LAYER.md routing)
   │     │     for await (token of agent.stream(context))
   │     │       redis.publish(..., {type:'chunk', target:context_ghost_id, data:token})
   │     │     (then question node tokens if present)

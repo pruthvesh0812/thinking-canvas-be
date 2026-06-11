@@ -56,9 +56,10 @@ Supabase
   └── Auth — anonymous sessions + Google OAuth + email/password
   NOTE: Supabase Realtime is NOT used. Single-user canvas — no backend push for canvas state.
 
-Google AI (single provider)
-  ├── gemini-3.1-flash-lite — content agents (Expander, Stress-Tester, Articulator, Observer, Outer Sub)
-  ├── gemini-2.5-flash — routing/classification (Attunement, Orchestrator, Summary, Rejection Insights)
+Google AI (single provider — all instantiation via src/lib/llm.ts, see LLM-LAYER.md)
+  ├── gemini-2.5-flash-lite (models.content()) — content agents (Expander, Stress-Tester, Articulator)
+  ├── gemini-2.5-flash (models.fast()) — Attunement, Orchestrator, Observer, Outer Sub, Summary, Rejection Insights
+  │     Observer + Outer Sub add providerOptions: { google: models.thinking('high') }
   └── gemini-embedding-2 — node embeddings
 ```
 
@@ -85,17 +86,19 @@ User
 
 ## Agent Model Routing
 
+> Source of truth: `src/lib/llm.ts` / `LLM-LAYER.md`. All instantiation goes through `models.fast()` / `models.content()` / `models.thinking()` — never `google(...)` directly.
+
 | Agent | Model | Thinking | Note |
 |---|---|---|---|
-| Expander | gemini-3.1-flash-lite | auto | |
-| Stress-Tester | gemini-3.1-flash-lite | auto | |
-| Articulator | gemini-3.1-flash-lite | auto | |
-| Observer | gemini-3.1-flash-lite | **high** | Compensates for Flash-Lite base |
-| Outer Subconscious | gemini-3.1-flash-lite | **high** | Compensates for Flash-Lite base |
-| Attunement Layer | gemini-2.5-flash | OFF | Pure classification |
-| Orchestrator | gemini-2.5-flash | OFF | Routing decision |
-| Directional Summary | gemini-2.5-flash | low | Structured output |
-| Rejection Insights | gemini-2.5-flash | low | Structured output |
+| Expander | gemini-2.5-flash-lite (models.content()) | OFF | |
+| Stress-Tester | gemini-2.5-flash-lite (models.content()) | OFF | |
+| Articulator | gemini-2.5-flash-lite (models.content()) | OFF | |
+| Observer | gemini-2.5-flash (models.fast()) | **high** (models.thinking('high')) | Compensates for Flash base |
+| Outer Subconscious | gemini-2.5-flash (models.fast()) | **high** (models.thinking('high')) | Compensates for Flash base |
+| Attunement Layer | gemini-2.5-flash (models.fast()) | OFF | Pure classification |
+| Orchestrator | gemini-2.5-flash (models.fast()) | OFF | Routing decision |
+| Directional Summary | gemini-2.5-flash (models.fast()) | low (models.thinking('low')) | Structured output |
+| Rejection Insights | gemini-2.5-flash (models.fast()) | low (models.thinking('low')) | Structured output |
 | Embeddings | gemini-embedding-2 | N/A | 3072 dimensions |
 
 **Single API key:** `GOOGLE_AI_API_KEY` covers all models.

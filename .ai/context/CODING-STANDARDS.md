@@ -76,25 +76,37 @@ const canvasEventSchema = z.object({
 ## Mastra Patterns
 
 ```typescript
-// ✅ gemini-3.1-flash-lite for content agents
-// ✅ thinking:high for Observer and Outer Sub
-import { google } from '@ai-sdk/google'
+// ✅ All model instantiation via src/lib/llm.ts — never import @ai-sdk/google directly (see LLM-LAYER.md)
+import { models } from '../lib/llm.js'
 
-export const observerAgent = new Agent({
-  name: 'Observer',
-  model: google('gemini-3.1-flash-lite', {
-    thinkingConfig: { thinkingBudget: -1 }  // -1 = high
-  }),
-  instructions: OBSERVER_SYSTEM_PROMPT,
-  tools: { get_big_picture, get_content, traverse_trail }
+// ✅ gemini-2.5-flash-lite (models.content()) for content agents — Expander, Stress-Tester, Articulator
+export const expanderAgent = new Agent({
+  id: 'expander',
+  name: 'Expander',
+  model: models.content(),
+  instructions: EXPANDER_SYSTEM_PROMPT,
+  tools: { get_window, traverse_trail, semantic_promote }
 })
 
-// ✅ gemini-2.5-flash for Attunement/Orchestrator/Summary (thinking:OFF)
+// ✅ gemini-2.5-flash (models.fast()) + thinking:high for Observer and Outer Sub
+// thinkingConfig is passed as providerOptions at call-site, not baked into the model
+export const observerAgent = new Agent({
+  id: 'observer',
+  name: 'Observer',
+  model: models.fast(),
+  instructions: OBSERVER_SYSTEM_PROMPT,
+  tools: { get_big_picture, get_content, traverse_trail, get_siblings }
+})
+
+const stream = await observerAgent.stream(serializedContext, {
+  providerOptions: { google: models.thinking('high') }
+})
+
+// ✅ gemini-2.5-flash (models.fast()) for Attunement/Orchestrator/Summary (thinking:OFF)
 export const attunementAgent = new Agent({
+  id: 'attunement',
   name: 'Attunement',
-  model: google('gemini-2.5-flash', {
-    thinkingConfig: { thinkingBudget: 0 }   // 0 = OFF
-  }),
+  model: models.fast(),
   instructions: ATTUNEMENT_SYSTEM_PROMPT
 })
 
