@@ -33,13 +33,14 @@ Receives canvas events from the frontend, runs the AI agent pipeline, and stream
 | Database / schema / migrations | `CORE-CONCEPTS.md` + `ARCHITECTURE.md` |
 | Auth / Stripe / tier enforcement | `ARCHITECTURE.md` |
 | Session Complete / Observer / learnings | `CORE-CONCEPTS.md` + `AGENT-PIPELINE.md` |
-| Model routing / Google AI / embeddings | `ARCHITECTURE.md` + `EXTERNAL-DOCS.md` |
-| New Mastra agent | `AGENT-PIPELINE.md` + `.ai/skills/create-mastra-agent.md` |
+| Model routing / Google AI / embeddings | `LLM-LAYER.md` |
+| New Mastra agent | `AGENT-PIPELINE.md` + `LLM-LAYER.md` + `.ai/skills/create-mastra-agent.md` |
 | New cursor tool | `SERIALIZATION.md` + `.ai/skills/create-cursor-tool.md` |
 | New Inngest function | `AGENT-PIPELINE.md` + `.ai/skills/create-inngest-function.md` |
 | Supabase migration | `.ai/skills/run-migration.md` |
 | External library question | `.ai/refs/EXTERNAL-DOCS.md` |
 | Coding conventions / patterns / prohibited patterns | `CODING-STANDARDS.md` |
+| Logging — adding logs to tools / agents / pipelines / routes | `LOGGING.md` |
 
 ---
 
@@ -129,6 +130,7 @@ thinking-canvas-api/
 | Shared types | `types/index.ts` |
 | Redis client | `src/lib/redis.ts` |
 | canAgentFire guard | `src/lib/guards.ts` |
+| Change AI model / provider | `src/lib/llm.ts` |
 
 ---
 
@@ -161,6 +163,8 @@ thinking-canvas-api/
 9. Redis pub/sub = ghost node streaming only — no canvas state over Redis
 10. Load active rejection_insights before every agent call — inject as NEGATIVE CONSTRAINTS
 11. Ghost structure (nodes + edges) defined by frontend from spawn descriptor — agent generates content only
+12. Never import `@ai-sdk/google` outside `src/lib/llm.ts` — all model instantiation centralised there (see `LLM-LAYER.md`)
+13. Every tool, agent, pipeline, and route must use `logger` from `src/lib/logger.ts` — never `console.log` directly (see `LOGGING.md`)
 
 ---
 

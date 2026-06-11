@@ -18,6 +18,7 @@
     "@mastra/core": "latest",
     "@supabase/supabase-js": "latest",
     "@upstash/redis": "latest",
+    "ai": "^6.0.201",
     "hono": "latest",
     "inngest": "latest",
     "langfuse": "latest",
