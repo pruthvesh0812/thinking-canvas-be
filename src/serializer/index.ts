@@ -345,7 +345,7 @@ export async function serialize(
   // Step 7 — NEGATIVE CONSTRAINTS block (Expander, Stress-Tester, Observer only).
   if (rejectionBlock) parts.push(rejectionBlock)
 
-  // Step 8 — Stateless agents (Articulator, Outer Sub): stop here — only Tier 0 + active node.
+  // Step 8 — Stateless agents (Outer Sub): stop here — only Tier 0 + active node.
   // No thread history, no rejection injection, no tier 2–4.
   if (rule.threadType === 'stateless') {
     for (let i = thread.messages.length - 1; i >= 0; i--) {

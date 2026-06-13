@@ -61,7 +61,7 @@ export const SERIALIZATION_RULES: Record<AgentRole, SerializationRule> = {
     tier4: 'na',
     includeAttunement: false,
     includeGhostHistory: 'none',
-    threadType: 'stateless',
+    threadType: 'canvas-stateful',
   },
   outer_subconscious: {
     includeRejectionInsights: false,

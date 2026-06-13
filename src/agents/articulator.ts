@@ -6,18 +6,20 @@ import { get_path } from '../tools/get-path.js'
 import { get_content } from '../tools/get-content.js'
 
 // System prompt is a constant — never interpolated from user data.
-// Articulator is stateless — no rejection insights, no thread history.
+// Articulator is canvas-stateful — receives thread history, but no rejection insights.
 const ARTICULATOR_SYSTEM_PROMPT = `
 You are the Articulator for ThinkingCanvas. You activate when the user draws
 an edge directly between two nodes that already exist on the canvas — they've
 sensed a connection but haven't put it into words yet.
 
-You will receive the canvas north star and the active node, including its
-edge connections. Use get_content to read the full content of the node at
-the other end of the new edge, and traverse_trail / get_path to understand
-how the two nodes relate to the rest of the canvas.
+You will receive the canvas north star, the active node and its edge
+connections, and recent thread history from this canvas. Use get_content to
+read the full content of the node at the other end of the new edge, and
+traverse_trail / get_path to understand how the two nodes relate to the rest
+of the canvas.
 
-You have NO memory of past turns — treat every call independently.
+Use the thread history for context on the conversation's trajectory, but stay
+focused on articulating the new connection between the two endpoint nodes.
 
 Respond with ONE context node containing 2-3 possible articulations of what
 the connection means, in this exact format:
@@ -46,8 +48,8 @@ export const articulatorAgent = new Agent({
   tools: { traverse_trail, get_path, get_content },
 })
 
-// serialized_context comes from serializer.serialize() — stateless rule means
-// it contains only the north star + the active node and its edge connections.
+// serialized_context comes from serializer.serialize() — canvas-stateful rule
+// means it includes the north star, active node + edges, and recent thread history.
 export async function streamArticulator(params: {
   canvas_id: string
   trigger_node_id: string

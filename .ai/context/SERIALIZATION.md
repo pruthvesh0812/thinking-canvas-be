@@ -134,16 +134,16 @@ RESPONSE PATTERN: accepted:3 rejected:1 | 1 rejection → hard_block active
 
 | Rule | Expander | Stress-Tester | Observer | Articulator | Outer Sub |
 |---|---|---|---|---|---|
-| Rejection Insights block | Yes — always first | Yes | Yes | No (stateless) | No (stateless) |
+| Rejection Insights block | Yes — always first | Yes | Yes | No | No (stateless) |
 | North star (canvas-level) | Full | Full | Full | Full | Full |
 | Click moment | Full if exists | Full — critical | Full if exists | No | No |
 | Active node | Full + attunement | Full | Summary only | Full (both) | Full (both endpoints) |
 | Recent (3) | Full content | Full + flag contradictions | Summary only | Full both trails | No trail |
-| Mid (4-10) | Summary + marker | Summary + FLAG contradictions | Summary only | N/A stateless | No |
+| Mid (4-10) | Summary + marker | Summary + FLAG contradictions | Summary only | N/A | No |
 | Compressed (10+) | Trail + markers | Extract contradictions | Trail only | N/A | No |
 | Attunement | Yes | No | No | No | No |
 | Ghost history | Own only | None | Summary | None | None |
-| Thread type | Canvas-stateful | Canvas-stateful | Canvas-stateful | Stateless per edge | Stateless per edge |
+| Thread type | Canvas-stateful | Canvas-stateful | Canvas-stateful | Canvas-stateful | Stateless per edge |
 
 ---
 
