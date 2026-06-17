@@ -153,32 +153,49 @@ Structure" below + SERIALIZATION.md → Observer Connection Feedback).
 
 The Observer is not a ghost-pair agent — `runObserver()` (`src/agents/observer.ts`)
 calls `.generate()` against a Zod schema instead of `.stream()`ing prose, and
-returns `{ anchor_node_ids, nodes, edges }` with labels already remapped to
-backend-assigned `crypto.randomUUID()` ghost IDs (never trust LLM-emitted IDs —
-same rule as SpawnDescriptor below).
+returns `{ anchor_node_ids, nodes, edges }` (or `null` when discarded) with
+labels already remapped to backend-assigned `crypto.randomUUID()` ghost IDs
+(never trust LLM-emitted IDs — same rule as SpawnDescriptor below).
 
 ```
-runObserver() output (ObserverObservation):
+runObserver() output (ObserverObservation | null):
   anchor_node_ids: string[]            — existing canvas nodes to highlight
   nodes: ObservationNode[]             — { ghost_id, level, node_type, content }
   edges: { from_id, to_id }[]          — from_id is an anchor id OR another node's ghost_id
 ```
 
-Persistence (once the Observer pipeline/route is built — see CLAUDE.md
-Implementation Order, features 8-10, not yet started):
+### Validation (in `runObserver`, before ghost IDs are minted)
+
+`validateObservation()` rejects malformed LLM output:
+- **Anchors** must be real nodes ON THIS CANVAS — fetched + canvas-checked
+  against the DB (the service-role client bypasses RLS, so the check is manual).
+- **Every edge endpoint** must resolve: `to` to a known node label, `from` to a
+  known node label OR a validated anchor id. No silent fallthrough.
+- **Strict level-+1**: anchor→level0, level k→level k+1 only. Monotonic levels
+  make the graph acyclic by construction (a cycle would need a level > itself)
+  and forbid level-skips — no separate cycle walk needed.
+- **Exactly one level-0 node**; every observation node has ≥1 incoming edge (no orphans).
+
+### Persistence + interaction (once the pipeline/route is built — features 8-10, not yet started)
 
 ```
 1. INSERT observer_structures  { canvas_id, session_id, thread_id, anchor_node_ids, nodes }
 2. INSERT observer_edges       one row per edge, structure_id = the row above, status='pending'
 3. Frontend highlights anchor_node_ids; hover reveals the structure from observer_edges
-4. User accepts/rejects each edge independently:
-     accept → node at to_id crosses into canvas (if not already there)
-     reject → user supplies connection_feedback (not_related|wrong_direction|too_indirect|already_obvious)
-              → INSERT rejection_insights with target_edge_id + connection_feedback set,
-                rejection_reason left null (see DATABASE-SCHEMA.md → rejection_insights)
+4. ACCEPT (local, committal): mark edge accepted → node at to_id crosses into canvas (if not already there)
+5. REJECT (re-think trigger, NOT a local delete):
+     a. user supplies connection_feedback (not_related|wrong_direction|too_indirect|already_obvious)
+     b. INSERT rejection_insights with target_edge_id + connection_feedback set,
+        rejection_reason left null (see DATABASE-SCHEMA.md → rejection_insights)
+     c. tear down the PENDING structure (already-accepted nodes stay committed)
+     d. re-invoke runObserver({ rethink: { previous, rejected_edge, reason } })
+        → revised structure (rejected reference dropped, affected node rewritten), or
+        → null (observation discarded)
 ```
 
-There is no accept/reject on the structure as a whole — every edge resolves on its own.
+Feedback is per-edge, but a rejection reconsiders the whole observation — the
+Observer's worst failure mode is a false cross-branch pattern, so one bad
+connection should make it re-think, not just lose one link.
 
 ---
 

@@ -108,14 +108,34 @@ thread themselves.
      level k (k>=1) — 1 to n nodes; a level-k node may fan into one shared
        level-(k+1) node or several, and a level-(k+1) node may converge
        from one level-k node or several
-   Most observations need only level 0 — deeper levels exist only when the
-   insight takes more than one cognitive jump to reach.
-4. Every EDGE (anchor→observation, observation→observation) is accepted or
-   rejected INDIVIDUALLY — never the structure as a whole. The user may
-   accept the bridge into level 0 but reject the further jump into level 1.
-5. A node crosses into the real canvas the first time one of its incoming
-   edges is accepted.
+   Every edge goes STRICTLY one level deeper (anchor→level0, level k→level k+1).
+   This monotonicity makes the graph acyclic by construction and forbids
+   level-skips. Most observations need only level 0 — deeper levels exist only
+   when the insight takes more than one cognitive jump to reach.
+4. The user accepts or rejects each EDGE individually (anchor→observation,
+   observation→observation) — there is no accept/reject on the structure as a
+   whole. Feedback granularity is per-edge.
+5. ACCEPT is local and committal: the node at the accepted edge's target
+   crosses into the real canvas (if not already there).
+6. REJECT is NOT a local delete — it is a re-think trigger. The user picks the
+   edge and a reason; the entire PENDING structure is torn down and the
+   Observer is re-invoked with the prior structure + the rejected edge + reason
+   (RE-THINK MODE, `runObserver({ rethink })`). It then either:
+     - re-emits a revised structure with the rejected reference dropped and the
+       affected node's content rewritten to stand on the remaining connections, or
+     - discards the observation entirely (`runObserver` returns null).
+   Example: 3 anchor edges fan into one level-0 node; the user rejects edge 2.
+   The whole structure disappears. If the observation still holds on anchors 1
+   and 3, the Observer rewrites that node's content referencing only those two;
+   if edge 2 was load-bearing, the observation is discarded.
+   (Already-accepted nodes from step 5 are committed and unaffected — only the
+   pending remainder is torn down.)
 ```
+
+**Validation:** the Observer's claimed structure is checked before any ghost ID
+is minted — anchors must be real nodes on this canvas, every edge endpoint must
+resolve, and edges must obey the strict level-+1 rule (see AGENT-PIPELINE.md →
+Observer Structure validation). LLM-emitted IDs are never trusted.
 
 **Edge rejection feedback is its own category**, distinct from the Rejection
 Insights Engine's content reasons (`too_abstract`/`too_technical`/`skip_for_now`)
