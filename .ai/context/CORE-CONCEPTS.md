@@ -115,19 +115,27 @@ thread themselves.
 4. The user accepts or rejects each EDGE individually (anchor→observation,
    observation→observation) — there is no accept/reject on the structure as a
    whole. Feedback granularity is per-edge.
-5. ACCEPT is local and committal: the node at the accepted edge's target
-   crosses into the real canvas (if not already there).
-6. REJECT is NOT a local delete — it is a re-think trigger. The user picks the
-   edge and a reason; the entire PENDING structure is torn down and the
-   Observer is re-invoked with the prior structure + the rejected edge + reason
-   (RE-THINK MODE, `runObserver({ rethink })`). It then either:
-     - re-emits a revised structure with the rejected reference dropped and the
-       affected node's content rewritten to stand on the remaining connections, or
-     - discards the observation entirely (`runObserver` returns null).
-   Example: 3 anchor edges fan into one level-0 node; the user rejects edge 2.
-   The whole structure disappears. If the observation still holds on anchors 1
-   and 3, the Observer rewrites that node's content referencing only those two;
-   if edge 2 was load-bearing, the observation is discarded.
+5. ACCEPT is per-edge, but an observation node is the genuine synthesis of
+   EVERY reference into it, so it only crosses into the real canvas once ALL of
+   its incoming edges are accepted. Node content is never hedged to survive a
+   missing reference — if a reference doesn't belong, the observation is wrong,
+   not partially right.
+6. REJECT is NOT a local delete — it is a re-think trigger, and it BATCHES. The
+   user may flag one OR MORE references as improper, each with a reason; the
+   structure stays on screen while they flag (rejecting one edge must not make
+   the rest vanish before the user has judged them). Once the user is done, the
+   entire PENDING structure is torn down and the Observer is re-invoked with the
+   prior structure + ALL rejected references + reasons (RE-THINK MODE,
+   `runObserver({ rethink })`). It then either:
+     - re-emits a revised structure with every rejected reference dropped and
+       each affected node rewritten as a genuine synthesis of the references
+       that remain, or
+     - discards the observation entirely (`runObserver` returns null) when
+       dropping the rejected references leaves it hollow.
+   Example: 3 anchor edges fan into one level-0 node; the user rejects edges 2
+   and 4. The whole structure disappears once they finish flagging. If the
+   observation still holds on the remaining references, the Observer rewrites
+   that node referencing only those; if what's left is hollow, it is discarded.
    (Already-accepted nodes from step 5 are committed and unaffected — only the
    pending remainder is torn down.)
 ```

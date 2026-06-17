@@ -47,10 +47,10 @@ If the insight is a single cognitive jump from the anchors — no missing
 context needed — express it in exactly ONE observation node at level 0.
 If it takes more than one jump to get there, split it: level 0 carries the
 bridge/context, and the next natural connection becomes level 1, and so on.
-Every node must make sense and stand on its own as a single link, because
-the user may accept the edge into it without having accepted the edge before
-it — never write a node that only makes sense if an earlier node was already
-accepted.
+A deeper node builds on the nodes that feed it — it is a true continuation of
+them, not a restatement. The user accepts the references into a node one by
+one, and the node only earns its place on the canvas once EVERY reference into
+it is accepted — so each reference must genuinely belong.
 
 STRUCTURE RULES (these are validated — violations are rejected):
 - anchor_node_ids must be REAL existing node IDs taken from the context or
@@ -62,9 +62,11 @@ STRUCTURE RULES (these are validated — violations are rejected):
 - Every observation node must have at least one incoming edge. Fan-in
   (several edges into one node) and fan-out (one node into several) are both
   allowed across adjacent levels.
-- When a node has several incoming anchor edges, write its content so it
-  still holds if only SOME of those anchors are accepted — never bundle two
-  separate claims into one node.
+- An observation node is the genuine synthesis of EVERY edge into it — each
+  reference must actually contribute. Write it raw and real; never hedge it so
+  it can survive a dropped reference, and never bundle in a reference that only
+  half-belongs. If even one reference is improper, the whole observation is
+  improper — so do not pad it to stay alive.
 
 Pick exactly ONE node_type per observation node from: reframe, mirror,
 pattern, reference, contradiction, appreciation — whichever best fits what
@@ -72,13 +74,16 @@ that specific node says.
 
 RE-THINK MODE
 If the context contains a PRIOR OBSERVATION (REJECTED) block, a previous
-structure of yours was torn down because the user rejected one edge and gave
-a reason. Reconsider the whole observation in light of that rejection:
-- If the core observation still holds without the rejected connection,
-  re-emit it: drop the rejected reference and rewrite the affected node's
-  content so it stands on only the connections that remain. Set discard=false.
-- If the rejected connection was load-bearing and the observation no longer
-  holds without it, set discard=true and return empty nodes and edges.
+structure of yours was torn down because the user rejected ONE OR MORE edges,
+each with a reason. Reconsider the whole observation in light of ALL of them
+together:
+- If the observation still holds once EVERY rejected reference is dropped,
+  re-emit it: remove those references and rewrite each affected node so it is a
+  genuine synthesis of only the references that remain. Set discard=false.
+- If dropping the rejected references leaves the observation hollow or
+  unsupported, set discard=true and return empty nodes and edges.
+Never keep a rejected reference, and never water a node down just to keep it
+alive — a real observation, or none.
 
 When discard is false, the test for every node: would a thoughtful person need
 to actually think to respond to THIS specific edge? If the human can accept it
@@ -105,12 +110,17 @@ type ObserverLLMOutput = z.infer<typeof observerOutputSchema>
 type LLMObservationNode = ObserverLLMOutput['nodes'][number]
 type LLMObservationEdge = ObserverLLMOutput['edges'][number]
 
-// Re-think input — when a prior structure was torn down by an edge rejection.
-// See AGENT-PIPELINE.md → Observer Structure (rejection re-think).
+// Re-think input — when a prior structure was torn down by edge rejections.
+// The user may flag SEVERAL improper references before the structure tears
+// down; the Observer reconsiders the whole observation against all of them at
+// once. See AGENT-PIPELINE.md → Observer Structure (rejection re-think).
 export type ObserverRethink = {
   previous: ObserverObservation
-  rejected_edge: { from_id: string; to_id: string }
-  reason: ConnectionRejectionReason
+  rejected_edges: Array<{
+    from_id: string
+    to_id: string
+    reason: ConnectionRejectionReason
+  }>
 }
 
 export const observerAgent = new Agent({
@@ -139,14 +149,15 @@ function rethinkBlock(rethink: ObserverRethink): string {
     lines.push(`(level ${n.level}, ${n.node_type}) "${n.content}"`)
   }
 
-  const to = byId.get(rethink.rejected_edge.to_id)
-  const fromNode = byId.get(rethink.rejected_edge.from_id)
-  const fromDesc = fromNode ? `level-${fromNode.level} node "${fromNode.content}"` : 'an anchor node'
-  const toDesc = to ? `level-${to.level} node "${to.content}"` : 'a node'
-
   lines.push('')
-  lines.push(`REJECTED EDGE: ${fromDesc} ──▶ ${toDesc}`)
-  lines.push(`REASON: ${CONNECTION_REASON_LABEL[rethink.reason]}`)
+  lines.push('REJECTED REFERENCES (drop ALL of these, then decide if anything real remains):')
+  for (const r of rethink.rejected_edges) {
+    const fromNode = byId.get(r.from_id)
+    const to = byId.get(r.to_id)
+    const fromDesc = fromNode ? `level-${fromNode.level} node "${fromNode.content}"` : 'an anchor node'
+    const toDesc = to ? `level-${to.level} node "${to.content}"` : 'a node'
+    lines.push(`- ${fromDesc} ──▶ ${toDesc}  (${CONNECTION_REASON_LABEL[r.reason]})`)
+  }
   return lines.join('\n')
 }
 

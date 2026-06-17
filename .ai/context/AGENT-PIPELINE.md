@@ -182,20 +182,27 @@ runObserver() output (ObserverObservation | null):
 1. INSERT observer_structures  { canvas_id, session_id, thread_id, anchor_node_ids, nodes }
 2. INSERT observer_edges       one row per edge, structure_id = the row above, status='pending'
 3. Frontend highlights anchor_node_ids; hover reveals the structure from observer_edges
-4. ACCEPT (local, committal): mark edge accepted → node at to_id crosses into canvas (if not already there)
-5. REJECT (re-think trigger, NOT a local delete):
+4. ACCEPT (per-edge): mark edge accepted. A node at to_id crosses into canvas
+   only once ALL its incoming edges are accepted — it is a synthesis of all of them.
+5. REJECT (re-think trigger, NOT a local delete) — BATCHES across edges:
      a. user supplies connection_feedback (not_related|wrong_direction|too_indirect|already_obvious)
-     b. INSERT rejection_insights with target_edge_id + connection_feedback set,
-        rejection_reason left null (see DATABASE-SCHEMA.md → rejection_insights)
-     c. tear down the PENDING structure (already-accepted nodes stay committed)
-     d. re-invoke runObserver({ rethink: { previous, rejected_edge, reason } })
-        → revised structure (rejected reference dropped, affected node rewritten), or
-        → null (observation discarded)
+        for one OR MORE edges; the structure stays visible while they flag.
+     b. INSERT a rejection_insights row per flagged edge, with target_edge_id +
+        connection_feedback set, rejection_reason left null (see DATABASE-SCHEMA.md)
+     c. once the user is done, tear down the PENDING structure (already-accepted
+        nodes stay committed)
+     d. re-invoke runObserver({ rethink: { previous, rejected_edges } }) with ALL
+        flagged edges at once
+        → revised structure (every rejected reference dropped, affected nodes
+          rewritten as a synthesis of survivors), or
+        → null (observation discarded — survivors are hollow)
 ```
 
 Feedback is per-edge, but a rejection reconsiders the whole observation — the
-Observer's worst failure mode is a false cross-branch pattern, so one bad
-connection should make it re-think, not just lose one link.
+Observer's worst failure mode is a false cross-branch pattern, so a bad
+reference should make it re-think, not just lose one link. Rejections batch
+because the user may spot several improper references at once; the structure
+must not vanish on the first before they've judged the rest.
 
 ---
 

@@ -248,9 +248,11 @@ Structure for the user-facing model.
 
 One row per accept/reject-able edge within an Observer structure — either an
 anchor→observation edge or an observation→observation edge between levels.
-Feedback is per-edge (the user picks one edge + a reason), but a rejection is a
-re-think trigger, not a local delete: the pending structure is torn down and the
-Observer is re-invoked. See CORE-CONCEPTS.md → The Observer Structure (steps 5-6).
+Feedback is per-edge (the user flags an edge + a reason), but a rejection is a
+re-think trigger, not a local delete: rejections batch (the user may flag
+several improper edges before the structure vanishes), then the pending
+structure is torn down and the Observer is re-invoked with all of them. See
+CORE-CONCEPTS.md → The Observer Structure (steps 5-6).
 
 | Column | Type | Use |
 |---|---|---|
@@ -258,7 +260,7 @@ Observer is re-invoked. See CORE-CONCEPTS.md → The Observer Structure (steps 5
 | `structure_id` | `UUID FK → observer_structures` | Which structure this edge belongs to |
 | `from_id` | `UUID NOT NULL` | An anchor node id (real canvas node), or another observation node's `ghost_id` from the parent structure's `nodes` array |
 | `to_id` | `UUID NOT NULL` | An observation node's `ghost_id` |
-| `status` | `TEXT NOT NULL` | `pending`, `accepted`, or `rejected`. Accept is local — the node at `to_id` crosses into the canvas. Reject tears down the remaining pending structure and re-invokes the Observer (re-think). |
+| `status` | `TEXT NOT NULL` | `pending`, `accepted`, or `rejected`. The node at `to_id` crosses into the canvas only once ALL its incoming edges are `accepted` (it is a synthesis of all of them). Any `rejected` edge batches into a re-think: the pending structure is torn down and the Observer re-invoked with every rejected edge. |
 | `created_at` | `TIMESTAMPTZ` | Creation timestamp |
 
 **RLS:** Access via `observer_structures` → canvas ownership.
