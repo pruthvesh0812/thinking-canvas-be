@@ -303,7 +303,7 @@ export async function serialize(
   const [nodeResults, edges, rejectionBlock] = await Promise.all([
     Promise.all(nodeIds.map(id => getNode(id).catch(() => null))),
     getEdgesByCanvas(canvas.id),
-    rule.includeRejectionInsights ? buildRejectionBlock(canvas.id) : Promise.resolve(''),
+    rule.includeRejectionInsights ? buildRejectionBlock(canvas.id, agentRole) : Promise.resolve(''),
   ])
 
   // Step 3 — Build lookup maps used by every formatter.

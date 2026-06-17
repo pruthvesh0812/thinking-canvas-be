@@ -1,5 +1,5 @@
 ---
-last-verified: 2026-06-09
+last-verified: 2026-06-17
 stale-after-days: 60
 ---
 
@@ -86,6 +86,18 @@ for await (const token of stream.textStream) {
 }
 ```
 
+**Exception — Observer and Attunement use `.generate()` with structured output,**
+never `.stream()`. Both produce a fixed-shape object (Attunement: classifier
+fields; Observer: `{anchor_node_ids, nodes, edges}` — see `src/agents/observer.ts`)
+rather than freeform prose tokens, so there's nothing to stream token-by-token:
+
+```typescript
+const { object } = await agentNameAgent.generate(serializedContext, {
+  structuredOutput: { schema: agentOutputSchema },
+  providerOptions: { google: models.thinking('high') }, // Observer only
+})
+```
+
 ---
 
 ## Prohibited
@@ -93,7 +105,8 @@ for await (const token of stream.textStream) {
 ```typescript
 // ❌ Never use agent.memory — threads are managed in Supabase (src/db/threads.ts)
 // ❌ Never build system prompt from user input
-// ❌ Never call agent.generate() for content agents — must stream
+// ❌ Never call agent.generate() for prose content agents — must stream (Observer/Attunement are the only structured-output exceptions)
 // ❌ Never import @ai-sdk/google directly — use models.* from src/lib/llm.ts (see LLM-LAYER.md)
 // ❌ Never bake thinkingConfig into the model instance — pass via providerOptions at call-site
+// ❌ Never trust ghost/node IDs emitted by the LLM — Observer must remap local labels to crypto.randomUUID() server-side
 ```

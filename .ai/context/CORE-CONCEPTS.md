@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-08
-verified-against: ThinkingCanvas_Foundation.docx + TechnicalBuild.docx (post-architecture-update)
+last-verified: 2026-06-17
+verified-against: ThinkingCanvas_Foundation.docx + TechnicalBuild.docx (post Observer-structure redesign)
 stale-after-days: 90
 ---
 
@@ -52,7 +52,7 @@ User
 |---|---|---|---|
 | **Expander** | New node in diverge phase | Opens 1-2 cognitive jumps ahead along the trail direction | gemini-2.5-flash-lite (`models.content()`) |
 | **Stress-Tester** | Phase switches to converging | Finds gaps, weak assumptions, contradictions | gemini-2.5-flash-lite (`models.content()`) |
-| **Observer** | Continuous + Session Complete | Bird's eye spatial map + drift detection vs north star | gemini-2.5-flash + thinking:high (`models.fast()` + `models.thinking('high')`) |
+| **Observer** | Continuous + Session Complete | Bird's eye spatial map + drift detection vs north star — highlights anchor nodes + a hierarchical structure, never writes a ghost pair directly (see "The Observer Structure" below) | gemini-2.5-flash + thinking:high (`models.fast()` + `models.thinking('high')`) |
 | **Outer Subconscious** | Question edge drawn (unlabeled) | Cross-domain associative leap across all human knowledge | gemini-2.5-flash + thinking:high (`models.fast()` + `models.thinking('high')`) |
 | **Articulator** | Edge drawn between two existing nodes | Completes half-formed connection — 2-3 possible articulations | gemini-2.5-flash-lite (`models.content()`) |
 
@@ -65,7 +65,8 @@ User
 
 ## The AI Node Architecture
 
-Every AI contribution is a structured ghost node pair:
+Every AI contribution from Expander, Stress-Tester, Articulator, and Outer
+Subconscious is a structured ghost node pair:
 
 ```
 Context Node (one of 6 types) + Question Node (mandatory except Appreciation)
@@ -87,6 +88,47 @@ Context Node (one of 6 types) + Question Node (mandatory except Appreciation)
 - Reject = both disappear (triggers Rejection Insights Engine)
 - No auto-fade — ghost waits until human acts
 - Progressive appearance: spawn signal → 1.5s animation → token streaming via SSE
+
+**The Observer is the exception** — it never writes a ghost pair into a
+thread. See "The Observer Structure" below.
+
+---
+
+## The Observer Structure
+
+The Observer doesn't propose a sentence the user can accept or reject as a
+unit — it highlights existing canvas nodes and lets the user pull on the
+thread themselves.
+
+```
+1. Observer picks one or more EXISTING canvas nodes as anchors and highlights them.
+2. User hovers an anchor → the proposed structure reveals itself (still ghost-state).
+3. Structure is a DAG of observation nodes, in levels:
+     level 0 — exactly ONE node, bridging directly from the anchor(s)
+     level k (k>=1) — 1 to n nodes; a level-k node may fan into one shared
+       level-(k+1) node or several, and a level-(k+1) node may converge
+       from one level-k node or several
+   Most observations need only level 0 — deeper levels exist only when the
+   insight takes more than one cognitive jump to reach.
+4. Every EDGE (anchor→observation, observation→observation) is accepted or
+   rejected INDIVIDUALLY — never the structure as a whole. The user may
+   accept the bridge into level 0 but reject the further jump into level 1.
+5. A node crosses into the real canvas the first time one of its incoming
+   edges is accepted.
+```
+
+**Edge rejection feedback is its own category**, distinct from the Rejection
+Insights Engine's content reasons (`too_abstract`/`too_technical`/`skip_for_now`)
+— it tells the Observer WHY that specific connection didn't hold, not whether
+the wording was off: `not_related | wrong_direction | too_indirect | already_obvious`.
+Stored on `rejection_insights` via `target_edge_id` + `connection_feedback`
+(see DATABASE-SCHEMA.md → rejection_insights), and injected only into the
+Observer's own prompt as an OBSERVER CONNECTION FEEDBACK block (see
+SERIALIZATION.md → Observer Connection Feedback).
+
+Persisted in `observer_structures` (one row per Observer invocation, holding
+the anchors + the full node list) and `observer_edges` (one row per
+individually-resolvable edge — see DATABASE-SCHEMA.md).
 
 ---
 
@@ -149,7 +191,9 @@ Canvas (permanent)
 ## Session Complete Flow
 
 Three screens, human-triggered (never automatic):
-1. **Observer Suggestions** — queued observations. Accept to canvas / Dismiss.
+1. **Observer Suggestions** — queued Observer structures from this session. Hover an
+   anchor to reveal it, accept/reject each edge individually (see "The Observer
+   Structure" above) — not an accept/dismiss on the structure as a whole.
 2. **Unresolved Threads** — question edges, contradictions, empty nodes. Carry Forward / Discard.
 3. **Session Closed** — carry-forwards written to `session_learnings`.
 

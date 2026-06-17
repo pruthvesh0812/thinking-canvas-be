@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-08
-verified-against: ThinkingCanvas_TechnicalBuild.docx (post single-user refactor)
+last-verified: 2026-06-17
+verified-against: ThinkingCanvas_TechnicalBuild.docx (post Observer-structure redesign)
 stale-after-days: 30
 ---
 
@@ -142,6 +142,43 @@ NEGATIVE CONSTRAINTS (active):
 ```
 
 After each agent turn: decrement `turns_remaining` for temporal deferrals. Set `active=false` when `turns_remaining=0`.
+
+The Observer additionally receives an OBSERVER CONNECTION FEEDBACK block, built
+from `rejection_insights` rows where `target_edge_id` is set (see "Observer
+Structure" below + SERIALIZATION.md → Observer Connection Feedback).
+
+---
+
+## Observer Structure
+
+The Observer is not a ghost-pair agent — `runObserver()` (`src/agents/observer.ts`)
+calls `.generate()` against a Zod schema instead of `.stream()`ing prose, and
+returns `{ anchor_node_ids, nodes, edges }` with labels already remapped to
+backend-assigned `crypto.randomUUID()` ghost IDs (never trust LLM-emitted IDs —
+same rule as SpawnDescriptor below).
+
+```
+runObserver() output (ObserverObservation):
+  anchor_node_ids: string[]            — existing canvas nodes to highlight
+  nodes: ObservationNode[]             — { ghost_id, level, node_type, content }
+  edges: { from_id, to_id }[]          — from_id is an anchor id OR another node's ghost_id
+```
+
+Persistence (once the Observer pipeline/route is built — see CLAUDE.md
+Implementation Order, features 8-10, not yet started):
+
+```
+1. INSERT observer_structures  { canvas_id, session_id, thread_id, anchor_node_ids, nodes }
+2. INSERT observer_edges       one row per edge, structure_id = the row above, status='pending'
+3. Frontend highlights anchor_node_ids; hover reveals the structure from observer_edges
+4. User accepts/rejects each edge independently:
+     accept → node at to_id crosses into canvas (if not already there)
+     reject → user supplies connection_feedback (not_related|wrong_direction|too_indirect|already_obvious)
+              → INSERT rejection_insights with target_edge_id + connection_feedback set,
+                rejection_reason left null (see DATABASE-SCHEMA.md → rejection_insights)
+```
+
+There is no accept/reject on the structure as a whole — every edge resolves on its own.
 
 ---
 

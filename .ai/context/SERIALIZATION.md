@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-08
-verified-against: ThinkingCanvas_TechnicalBuild.docx, Section 07 (post-architecture-update)
+last-verified: 2026-06-17
+verified-against: ThinkingCanvas_TechnicalBuild.docx, Section 07 (post Observer-structure redesign)
 stale-after-days: 30
 ---
 
@@ -35,6 +35,27 @@ NEGATIVE CONSTRAINTS (active — do not violate):
 ```
 
 Temporal deferrals decrement `turns_remaining` after each agent turn. When `turns_remaining=0`, set `active=false`.
+
+### Observer Connection Feedback (Observer only — injected after NEGATIVE CONSTRAINTS)
+
+The Observer doesn't write ghost pairs — it proposes a structure of edges, each
+individually accepted/rejected by the user. Rejected edges produce a SEPARATE
+category of `rejection_insights` row (`target_edge_id` + `connection_feedback`
+set, `rejection_reason` null — see DATABASE-SCHEMA.md → rejection_insights).
+`buildRejectionBlock(canvas_id, agentRole)` renders these as their own block,
+and only when `agentRole === 'observer'`:
+
+```
+OBSERVER CONNECTION FEEDBACK (active — do not repeat these connections):
+─────────────────────────────────────────────
+[APPROACH PIVOT]       These two nodes are not actually related this way
+                       Source: seq:22, reason: Not Related
+[HARD BLOCK]           Needs an intermediate bridge node — don't jump directly
+                       Source: seq:25, reason: Too Indirect
+─────────────────────────────────────────────
+```
+
+`connection_feedback` values: `not_related | wrong_direction | too_indirect | already_obvious`.
 
 ---
 
@@ -134,7 +155,7 @@ RESPONSE PATTERN: accepted:3 rejected:1 | 1 rejection → hard_block active
 
 | Rule | Expander | Stress-Tester | Observer | Articulator | Outer Sub |
 |---|---|---|---|---|---|
-| Rejection Insights block | Yes — always first | Yes | Yes | No | No (stateless) |
+| Rejection Insights block | Yes — always first | Yes | Yes + own OBSERVER CONNECTION FEEDBACK block | No | No (stateless) |
 | North star (canvas-level) | Full | Full | Full | Full | Full |
 | Click moment | Full if exists | Full — critical | Full if exists | No | No |
 | Active node | Full + attunement | Full | Summary only | Full (both) | Full (both endpoints) |
@@ -144,6 +165,12 @@ RESPONSE PATTERN: accepted:3 rejected:1 | 1 rejection → hard_block active
 | Attunement | Yes | No | No | No | No |
 | Ghost history | Own only | None | Summary | None | None |
 | Thread type | Canvas-stateful | Canvas-stateful | Canvas-stateful | Canvas-stateful | Stateless per edge |
+
+**Observer output is structured, not prose.** `runObserver()` calls `.generate()`
+with a Zod schema (`{ anchor_node_ids, nodes: [{label, level, node_type, content}],
+edges: [{from, to}] }`), not `.stream()`. There is no `[NODE_TYPE]`/`[QUESTION]`
+text format — see CORE-CONCEPTS.md → The AI Node Architecture and
+AGENT-PIPELINE.md → Observer Structure for how this gets persisted.
 
 ---
 
