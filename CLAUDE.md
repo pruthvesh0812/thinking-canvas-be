@@ -87,7 +87,8 @@ thinking-canvas-api/
 │   │   ├── nodes.ts
 │   │   ├── edges.ts
 │   │   ├── threads.ts
-│   │   └── rejection-insights.ts
+│   │   ├── rejection-insights.ts
+│   │   └── observer-structures.ts  # read-only until pipeline writes land (features 8-10)
 │   ├── routes/
 │   │   ├── canvas-event.ts # POST /api/canvas-event
 │   │   ├── stream.ts       # GET /api/stream/:sessionId (SSE via Redis)

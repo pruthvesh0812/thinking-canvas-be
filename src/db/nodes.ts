@@ -29,6 +29,21 @@ export async function getRecentNodes(
   return (data ?? []) as Node[]
 }
 
+// Every node on the canvas, oldest first — the Observer's bird's-eye map source.
+// Returns full Node rows for consistency with the rest of this module, but callers
+// must only read .summary/.direction_marker/.session_id — never .content (the
+// Observer's "summary only, never full content" rule — see CORE-CONCEPTS.md).
+export async function getAllByCanvas(canvas_id: string): Promise<Node[]> {
+  const { data, error } = await db
+    .from('nodes')
+    .select('*')
+    .eq('canvas_id', canvas_id)
+    .order('created_at', { ascending: true })
+
+  if (error) throw new Error(`getAllByCanvas failed: ${error.message}`)
+  return (data ?? []) as Node[]
+}
+
 export async function getNodesBySession(
   canvas_id: string,
   session_id: string

@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-17
-verified-against: ThinkingCanvas_TechnicalBuild.docx (post Observer-structure redesign)
+last-verified: 2026-06-18
+verified-against: ThinkingCanvas_TechnicalBuild.docx (post Observer canvas-map context model)
 stale-after-days: 30
 ---
 
@@ -163,6 +163,17 @@ runObserver() output (ObserverObservation | null):
   nodes: ObservationNode[]             — { ghost_id, level, node_type, content }
   edges: { from_id, to_id }[]          — from_id is an anchor id OR another node's ghost_id
 ```
+
+`serialized_context` for `runObserver()` does NOT come from the recency-tiered
+pipeline the other agents use — Observer's `SerializationRule.threadType` is
+`'canvas-map'`, which routes `serialize()` through `serializeCanvasMap()`
+instead of `classifyTiers()` + Tier 1–4 formatters (see SERIALIZATION.md →
+Observer Context Model). The pipeline calling `runObserver()` should pass the
+triggering node through `serialize(thread, 'observer', canvas, { triggerNodeId })`
+— this 4th argument is optional and only consumed by the canvas-map path; every
+other agent's call site is unaffected. The Observer's own thread turn is a
+distinct `ThreadMessage` variant, `turn_type: 'observer_structure'` (points at
+`structure_id`, not a ghost pair) — see types/index.ts.
 
 ### Validation (in `runObserver`, before ghost IDs are minted)
 

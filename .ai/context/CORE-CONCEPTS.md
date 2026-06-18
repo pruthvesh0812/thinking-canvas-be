@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-17
-verified-against: ThinkingCanvas_Foundation.docx + TechnicalBuild.docx (post Observer-structure redesign)
+last-verified: 2026-06-18
+verified-against: ThinkingCanvas_Foundation.docx + TechnicalBuild.docx (post Observer canvas-map context model)
 stale-after-days: 90
 ---
 
@@ -157,6 +157,14 @@ SERIALIZATION.md → Observer Connection Feedback).
 Persisted in `observer_structures` (one row per Observer invocation, holding
 the anchors + the full node list) and `observer_edges` (one row per
 individually-resolvable edge — see DATABASE-SCHEMA.md).
+
+**Context model:** the Observer does not receive the recency-tiered context
+the conversational agents get. Its bird's-eye role needs the whole canvas, not
+the last few turns, so it's serialized via a separate `canvas-map` thread type:
+a full spatial map of every node + edge (summary-only, grouped by session), a
+small "current focus" pointer to recent activity, and its own past structures
+with their accept/reject outcomes — all read fresh from source tables, never
+from the thread log. See SERIALIZATION.md → Observer Context Model.
 
 ---
 

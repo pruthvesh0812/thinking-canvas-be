@@ -124,6 +124,17 @@ export type ThreadMessage =
       ghost_pair: GhostPair
       timestamp: string
     }
+  | {
+      // The Observer never writes a ghost pair — this turn just points at the
+      // structure it produced. Per-edge outcomes are read live from
+      // observer_structures/observer_edges at serialize time, never cached
+      // here, so a structure's status can't go stale in the thread log.
+      role: 'assistant'
+      turn_type: 'observer_structure'
+      content: string          // short summary, for prose context only
+      structure_id: string
+      timestamp: string
+    }
 
 export type AgentThread = {
   id: string
@@ -141,8 +152,10 @@ export type AgentThread = {
 // one or more existing canvas nodes (anchors) and proposes a hierarchical DAG of
 // observation nodes reachable from them. The user hovers an anchor to reveal the
 // structure and accepts/rejects each EDGE independently — never the structure as
-// a unit. A node only crosses into the canvas once one of its incoming edges is
-// accepted.
+// a unit. A node is the genuine synthesis of EVERY edge into it, so it only
+// crosses into the canvas once ALL of its incoming edges are accepted; any
+// rejected edge batches into a re-think of the whole observation instead of a
+// local delete (see CORE-CONCEPTS.md → The Observer Structure).
 
 export type ObservationNode = {
   ghost_id: string

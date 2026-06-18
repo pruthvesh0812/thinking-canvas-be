@@ -1,8 +1,9 @@
 import { classifyTiers } from './tiers.js'
 import { SERIALIZATION_RULES, type SerializationRule } from './rules.js'
 import { buildRejectionBlock } from './rejection.js'
-import { getNode } from '../db/nodes.js'
+import { getNode, getAllByCanvas, getRecentNodes } from '../db/nodes.js'
 import { getEdgesByCanvas } from '../db/edges.js'
+import { getStructuresByCanvas, getEdgesByStructure } from '../db/observer-structures.js'
 import { logger } from '../lib/logger.js'
 import type {
   AgentThread,
@@ -12,6 +13,8 @@ import type {
   Node,
   Edge,
   GhostStatus,
+  ObserverStructure,
+  ObserverEdge,
 } from '../../types/index.js'
 
 const DIVIDER = '────────────────────────────────────────────────'
@@ -20,7 +23,21 @@ const COMPRESS_DIVIDER = '══════════════════
 // ─── Type helpers ────────────────────────────────────────────────────────────
 
 type UserCanvasMsg = Extract<ThreadMessage, { role: 'user'; turn_type: 'canvas_event' | 'session_boundary' }>
-type AssistantMsg = Extract<ThreadMessage, { role: 'assistant' }>
+
+// Tier formatters only ever render ghost_pair turns — canvas-map agents (Observer)
+// skip the tiered path entirely (see serializeCanvasMap), so a non-ghost_pair
+// assistant turn can never reach them. Narrowing through this guard, rather than
+// typing assistantMsg as the full ThreadMessage assistant union, makes that a
+// compile-time fact: a future turn_type added to ThreadMessage can't silently
+// reach `.ghost_pair` here without TypeScript flagging every call site that needs
+// its own handling.
+type GhostPairMsg = Extract<ThreadMessage, { role: 'assistant'; turn_type: 'ghost_pair' }>
+
+// Returns msg narrowed to GhostPairMsg, or null if it's missing, a user turn,
+// or a non-ghost_pair assistant turn (e.g. a future observer_structure turn).
+function asGhostPairMsg(msg: ThreadMessage | undefined): GhostPairMsg | null {
+  return msg && msg.role === 'assistant' && msg.turn_type === 'ghost_pair' ? msg : null
+}
 
 // ─── Small formatters ─────────────────────────────────────────────────────────
 
@@ -82,7 +99,7 @@ function edgeLines(
 // Full content + edges + optional attunement + optional ghost pair history.
 function formatTier1(
   msg: UserCanvasMsg,
-  assistantMsg: AssistantMsg | null,
+  assistantMsg: GhostPairMsg | null,
   seq: number,
   node: Node | undefined,
   edges: Edge[],
@@ -136,7 +153,7 @@ function formatTier1(
 // Full or summary content per agent rule, plus ghost response outcome.
 function formatTier2(
   msg: UserCanvasMsg,
-  assistantMsg: AssistantMsg | null,
+  assistantMsg: GhostPairMsg | null,
   seq: number,
   node: Node | undefined,
   edges: Edge[],
@@ -185,7 +202,7 @@ function formatTier2(
 // Summary only + compact edge notation to save context tokens.
 function formatTier3(
   msg: UserCanvasMsg,
-  assistantMsg: AssistantMsg | null,
+  assistantMsg: GhostPairMsg | null,
   seq: number,
   node: Node | undefined,
   edges: Edge[],
@@ -232,7 +249,7 @@ function formatTier3(
 
 type Tier4Item = {
   msg: UserCanvasMsg
-  assistantMsg: AssistantMsg | null
+  assistantMsg: GhostPairMsg | null
   seq: number
   node: Node | undefined
   edges: Edge[]
@@ -278,17 +295,152 @@ function formatTier4Group(items: Tier4Item[]): string {
   return lines.join('\n')
 }
 
+// ─── Canvas-map formatters (Observer — bird's-eye, not recency-tiered) ───────
+
+// Renders every node on the canvas, grouped by session, with full edge
+// connections. Source of truth is the nodes/edges tables directly — independent
+// of any thread's message log — so the Observer's view of the canvas can never
+// miss a branch a thread happened not to record.
+function canvasMapBlock(allNodes: Node[], edges: Edge[], seqMap: Map<string, number>): string {
+  // Step 1 — Index nodes by ID (for edgeLines' lookups) and group them by
+  // session, preserving each session's insertion order (allNodes is oldest-first).
+  const nodeMap = new Map(allNodes.map(n => [n.id, n]))
+  const bySession = new Map<string, Node[]>()
+  for (const n of allNodes) {
+    const list = bySession.get(n.session_id) ?? []
+    list.push(n)
+    bySession.set(n.session_id, list)
+  }
+
+  // Step 2 — One sub-header per session, then every node in that session as
+  // summary + edges — never full content, per the Observer's "summary only" rule.
+  const lines: string[] = [COMPRESS_DIVIDER, 'CANVAS MAP (all sessions — summary only)']
+  for (const [sessionId, nodes] of bySession) {
+    lines.push(`─── session ${sessionId.slice(0, 8)} ───`)
+    for (const n of nodes) {
+      lines.push(`[seq:${seqMap.get(n.id)} | ${n.id} | ${n.direction_marker ?? '?'}]`)
+      lines.push(`  "${n.summary ?? '(no summary yet)'}"`)
+      for (const line of edgeLines(n.id, edges, nodeMap, seqMap)) {
+        lines.push(`  ${line}`)
+      }
+    }
+  }
+  lines.push(COMPRESS_DIVIDER)
+  return lines.join('\n')
+}
+
+// Light recency signal on top of the full map above — where the user's
+// attention is RIGHT NOW. Deliberately small: the map already carries the
+// spatial picture, this just flags the active thread.
+function currentFocusBlock(recentNodes: Node[], seqMap: Map<string, number>, triggerNodeId: string | undefined): string {
+  // getRecentNodes returns newest-first; flip to oldest-first so this block
+  // reads top-to-bottom in the same direction as CANVAS MAP above it.
+  const chronological = [...recentNodes].reverse()
+  const lines: string[] = [DIVIDER, 'CURRENT FOCUS (most recent activity)']
+  for (const n of chronological) {
+    // ★TRIGGER marks the node that caused this Observer run — the one new
+    // thing since the canvas map was last "current" for this agent.
+    const flag = n.id === triggerNodeId ? ' | ★TRIGGER' : ''
+    lines.push(`[seq:${seqMap.get(n.id)} | ${n.id} | ${n.direction_marker ?? '?'}${flag}]`)
+    lines.push(`  "${n.summary ?? '(no summary yet)'}"`)
+  }
+  lines.push(DIVIDER)
+  return lines.join('\n')
+}
+
+// The Observer's own history — read live from observer_structures/observer_edges,
+// never from a cached thread message, so an edge's status is always current.
+function pastObservationsBlock(structures: ObserverStructure[], edgesByStructure: Map<string, ObserverEdge[]>): string {
+  // Today this is always empty — no pipeline writes observer_structures/
+  // observer_edges yet (features 8-10). The block renders correctly regardless,
+  // so the read side is already in place for when those writes land.
+  if (structures.length === 0) {
+    return [DIVIDER, 'PAST OBSERVATIONS: none yet', DIVIDER].join('\n')
+  }
+
+  const lines: string[] = [DIVIDER, 'PAST OBSERVATIONS (this canvas)']
+  for (const s of structures) {
+    const structureEdges = edgesByStructure.get(s.id) ?? []
+    lines.push(`[structure:${s.id.slice(0, 8)} | anchors: ${s.anchor_node_ids.map(id => id.slice(0, 8)).join(', ')}]`)
+    for (const n of s.nodes) {
+      // A node is a synthesis of every edge feeding it (see CORE-CONCEPTS.md →
+      // The Observer Structure), so its overall outcome mirrors that rule:
+      // 'accepted' only once ALL its edges are; any rejected edge marks the
+      // whole node 'rejected' (it was torn down/re-thought); otherwise 'pending'.
+      const statuses = structureEdges.filter(e => e.to_id === n.ghost_id).map(e => e.status)
+      const overall = statuses.length === 0 ? 'no edges'
+        : statuses.every(st => st === 'accepted') ? 'accepted'
+        : statuses.some(st => st === 'rejected') ? 'rejected'
+        : 'pending'
+      lines.push(`  (level ${n.level}, ${n.node_type}) "${n.content}" — ${overall}`)
+    }
+  }
+  lines.push(DIVIDER)
+  return lines.join('\n')
+}
+
+// Builds the Observer's full context: north star → rejection block → canvas map
+// → current focus → past observations. No recency tiers — see SERIALIZATION.md
+// → Observer Context Model for why the bird's-eye role needs this shape instead.
+async function serializeCanvasMap(
+  canvas: Canvas,
+  agentRole: AgentRole,
+  rule: SerializationRule,
+  triggerNodeId: string | undefined,
+): Promise<string> {
+  // Step 1 — Fetch everything this context needs in parallel, straight from
+  // source tables (never from a thread's message log — see file header note).
+  const [allNodes, edges, recentNodes, structures, rejectionBlock] = await Promise.all([
+    getAllByCanvas(canvas.id),
+    getEdgesByCanvas(canvas.id),
+    getRecentNodes(canvas.id, 5),
+    getStructuresByCanvas(canvas.id),
+    rule.includeRejectionInsights ? buildRejectionBlock(canvas.id, agentRole) : Promise.resolve(''),
+  ])
+
+  // Step 2 — One more round-trip per structure to pull its edges (can't be
+  // batched — getEdgesByStructure takes a single structure_id), fired together.
+  const edgesByStructure = new Map<string, ObserverEdge[]>()
+  await Promise.all(structures.map(async (s) => {
+    edgesByStructure.set(s.id, await getEdgesByStructure(s.id))
+  }))
+
+  // Step 3 — seq numbers are this canvas's full node order (1-based), so the
+  // CANVAS MAP and CURRENT FOCUS blocks below can cross-reference the same seq.
+  const seqMap = new Map<string, number>()
+  allNodes.forEach((n, i) => seqMap.set(n.id, i + 1))
+
+  // Step 4 — Assemble in a fixed order: anchor → constraints → spatial map →
+  // recency pointer → the Observer's own track record.
+  const parts: string[] = [northStarBlock(canvas)]
+  if (rejectionBlock) parts.push(rejectionBlock)
+  parts.push(canvasMapBlock(allNodes, edges, seqMap))
+  parts.push(currentFocusBlock(recentNodes, seqMap, triggerNodeId))
+  parts.push(pastObservationsBlock(structures, edgesByStructure))
+
+  return parts.join('\n\n')
+}
+
 // ─── Main serialize() ─────────────────────────────────────────────────────────
 
 // Called by all pipeline functions before agent invocation.
 // Converts the agent's canvas-scoped thread into structured text for the LLM context window.
+// options.triggerNodeId is only used by canvas-map agents (Observer) — see serializeCanvasMap.
 export async function serialize(
   thread: AgentThread,
   agentRole: AgentRole,
   canvas: Canvas,
+  options?: { triggerNodeId?: string },
 ): Promise<string> {
   const rule = SERIALIZATION_RULES[agentRole]
-  logger.info('serialize:start', { canvas_id: canvas.id, agent_role: agentRole, message_count: thread.messages.length })
+  logger.info('serialize:start', { canvas_id: canvas.id, agent_role: agentRole, message_count: thread.messages.length, thread_type: rule.threadType })
+
+  // Canvas-map agents don't read this thread's recency tiers at all — their
+  // context is the whole canvas plus their own structure history, both fetched
+  // fresh from their source tables.
+  if (rule.threadType === 'canvas-map') {
+    return serializeCanvasMap(canvas, agentRole, rule, options?.triggerNodeId)
+  }
 
   // Step 1 — Collect all node IDs referenced across the thread so they can be batch-fetched.
   const nodeIds = thread.messages
@@ -355,9 +507,7 @@ export async function serialize(
       const nodeId = 'node_id' in msg ? msg.node_id : undefined
       const seq = nodeId ? (seqMap.get(nodeId) ?? 0) : 0
       const node = nodeId ? nodeMap.get(nodeId) : undefined
-      const assistantMsg = (i + 1 < thread.messages.length && thread.messages[i + 1].role === 'assistant')
-        ? (thread.messages[i + 1] as AssistantMsg)
-        : null
+      const assistantMsg = asGhostPairMsg(thread.messages[i + 1])
 
       parts.push(formatTier1(msg as UserCanvasMsg, assistantMsg, seq, node, edges, nodeMap, seqMap, rule, 0))
       break
@@ -384,9 +534,7 @@ export async function serialize(
     if (tier === undefined) continue
 
     // Pair the user message with its immediately following assistant response (if any).
-    const assistantMsg = (i + 1 < thread.messages.length && thread.messages[i + 1].role === 'assistant')
-      ? (thread.messages[i + 1] as AssistantMsg)
-      : null
+    const assistantMsg = asGhostPairMsg(thread.messages[i + 1])
 
     const nodeId = 'node_id' in msg ? msg.node_id : undefined
     const seq = nodeId ? (seqMap.get(nodeId) ?? 0) : 0

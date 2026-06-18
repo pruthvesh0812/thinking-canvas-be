@@ -218,9 +218,10 @@ async function validateObservation(canvas_id: string, out: ObserverLLMOutput): P
   }
 }
 
-// serialized_context comes from serializer.serialize() — summary-only Tier 1+
-// per the Observer serialization rule, including NEGATIVE CONSTRAINTS and
-// OBSERVER CONNECTION FEEDBACK.
+// serialized_context comes from serializer.serialize() — the canvas-map context
+// model (full canvas spatial map + current focus + past observations), including
+// NEGATIVE CONSTRAINTS and OBSERVER CONNECTION FEEDBACK. See SERIALIZATION.md →
+// Observer Context Model.
 // thinkingBudget: 8000 ('high') compensates for the Flash base model.
 //
 // Returns the validated structure with labels remapped to backend-assigned ghost

@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-08
-verified-against: ThinkingCanvas_TechnicalBuild.docx (post single-user refactor)
+last-verified: 2026-06-18
+verified-against: ThinkingCanvas_TechnicalBuild.docx (post single-user refactor; added exhaustiveness-guard convention)
 stale-after-days: 90
 ---
 
@@ -69,6 +69,19 @@ const canvasEventSchema = z.object({
 
 // ❌ Never use `any`
 // ❌ Never use type assertions (as X) unless unavoidable
+
+// ✅ Narrow a discriminated union with a type guard instead of casting —
+// ThreadMessage's assistant variants are a discriminated union on turn_type
+// (ghost_pair | observer_structure | ...future variants). A formatter that
+// only handles one variant should narrow to it explicitly, so adding a new
+// variant later forces every such call site to be re-examined by the
+// compiler instead of silently reaching a field that isn't there at runtime.
+type GhostPairMsg = Extract<ThreadMessage, { role: 'assistant'; turn_type: 'ghost_pair' }>
+function asGhostPairMsg(msg: ThreadMessage | undefined): GhostPairMsg | null {
+  return msg && msg.role === 'assistant' && msg.turn_type === 'ghost_pair' ? msg : null
+}
+// ❌ const gp = (msg as AssistantMsg).ghost_pair   — unsafe, survives a missing case
+// ✅ const gp = asGhostPairMsg(msg)?.ghost_pair    — null when it isn't this variant
 ```
 
 ---

@@ -10,7 +10,10 @@ export type SerializationRule = {
   tier4: 'trail+markers' | 'extract_contradictions' | 'trail' | 'na'
   includeAttunement: boolean
   includeGhostHistory: 'own' | 'none' | 'summary'
-  threadType: 'canvas-stateful' | 'stateless'
+  // 'canvas-map' = bird's-eye agents (Observer). Bypasses recency tiers entirely —
+  // see serializeCanvasMap() in index.ts. activeNode/tier2/tier3/tier4/
+  // includeAttunement/includeGhostHistory are ignored for this thread type.
+  threadType: 'canvas-stateful' | 'stateless' | 'canvas-map'
 }
 
 // Transcribed directly from SERIALIZATION.md — Per-Agent Serialization Rules table.
@@ -49,7 +52,7 @@ export const SERIALIZATION_RULES: Record<AgentRole, SerializationRule> = {
     tier4: 'trail',
     includeAttunement: false,
     includeGhostHistory: 'summary',
-    threadType: 'canvas-stateful',
+    threadType: 'canvas-map',
   },
   articulator: {
     includeRejectionInsights: false,
