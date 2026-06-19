@@ -1,4 +1,4 @@
-import { classifyTiers } from './tiers.js'
+import { classifyTiers, type Tier } from './tiers.js'
 import { SERIALIZATION_RULES, type SerializationRule } from './rules.js'
 import { buildRejectionBlock } from './rejection.js'
 import { getNode, getAllByCanvas, getRecentNodes } from '../db/nodes.js'
@@ -421,102 +421,45 @@ async function serializeCanvasMap(
   return parts.join('\n\n')
 }
 
-// ─── Main serialize() ─────────────────────────────────────────────────────────
+// ─── Thread-type strategies (stateless / canvas-stateful tiering) ───────────
 
-// Called by all pipeline functions before agent invocation.
-// Converts the agent's canvas-scoped thread into structured text for the LLM context window.
-// options.triggerNodeId is only used by canvas-map agents (Observer) — see serializeCanvasMap.
-export async function serialize(
+// Stateless agents (Outer Sub) only ever see Tier 0 + the single active node —
+// no thread history, no tier 2–4. Returns '' if the thread has no canvas_event
+// message yet (nothing to show as "active").
+function serializeStateless(
   thread: AgentThread,
-  agentRole: AgentRole,
-  canvas: Canvas,
-  options?: { triggerNodeId?: string },
-): Promise<string> {
-  const rule = SERIALIZATION_RULES[agentRole]
-  logger.info('serialize:start', { canvas_id: canvas.id, agent_role: agentRole, message_count: thread.messages.length, thread_type: rule.threadType })
+  rule: SerializationRule,
+  nodeMap: Map<string, Node>,
+  seqMap: Map<string, number>,
+  edges: Edge[],
+): string {
+  for (let i = thread.messages.length - 1; i >= 0; i--) {
+    const msg = thread.messages[i]
+    if (msg.role !== 'user' || msg.turn_type !== 'canvas_event') continue
 
-  // Canvas-map agents don't read this thread's recency tiers at all — their
-  // context is the whole canvas plus their own structure history, both fetched
-  // fresh from their source tables.
-  if (rule.threadType === 'canvas-map') {
-    return serializeCanvasMap(canvas, agentRole, rule, options?.triggerNodeId)
+    const nodeId = 'node_id' in msg ? msg.node_id : undefined
+    const seq = nodeId ? (seqMap.get(nodeId) ?? 0) : 0
+    const node = nodeId ? nodeMap.get(nodeId) : undefined
+    const assistantMsg = asGhostPairMsg(thread.messages[i + 1])
+
+    return formatTier1(msg as UserCanvasMsg, assistantMsg, seq, node, edges, nodeMap, seqMap, rule, 0)
   }
+  return ''
+}
 
-  // Step 1 — Collect all node IDs referenced across the thread so they can be batch-fetched.
-  const nodeIds = thread.messages
-    .filter((m): m is Extract<ThreadMessage, { role: 'user'; turn_type: 'canvas_event' | 'session_boundary' }> =>
-      m.role === 'user' && m.turn_type === 'canvas_event'
-    )
-    .map(m => ('node_id' in m ? m.node_id : undefined))
-    .filter((id): id is string => Boolean(id))
-
-  // Step 2 — Fetch node metadata, canvas edges, and the rejection block in parallel.
-  // Nodes are fetched individually (no batch endpoint) but all fired at once via Promise.all.
-  const [nodeResults, edges, rejectionBlock] = await Promise.all([
-    Promise.all(nodeIds.map(id => getNode(id).catch(() => null))),
-    getEdgesByCanvas(canvas.id),
-    rule.includeRejectionInsights ? buildRejectionBlock(canvas.id, agentRole) : Promise.resolve(''),
-  ])
-
-  // Step 3 — Build lookup maps used by every formatter.
-  // nodeMap: node_id → Node  |  seqMap: node_id → 1-based position in thread
-  const nodeMap = new Map<string, Node>()
-  for (const n of nodeResults) {
-    if (n) nodeMap.set(n.id, n)
-  }
-
-  const seqMap = new Map<string, number>()
-  let seqCounter = 0
-  for (const msg of thread.messages) {
-    if (msg.role === 'user' && msg.turn_type === 'canvas_event' && 'node_id' in msg && msg.node_id) {
-      seqCounter++
-      seqMap.set(msg.node_id, seqCounter)
-    }
-  }
-
-  // Step 4 — Classify every message in the thread into a tier (1–4).
-  const tierMap = classifyTiers(thread.messages)
-
-  // ── Assembly ────────────────────────────────────────────────────────────────
-
-  const parts: string[] = []
-
-  // Step 5 — North Star (Tier 0) — always first, always present.
-  parts.push(northStarBlock(canvas))
-
-  // Step 6 — Most recent session boundary marker, if any.
-  // Placed directly after the north star so the agent sees the current session context.
-  const sessionBoundaries = thread.messages.filter(
-    (m): m is Extract<ThreadMessage, { role: 'user'; turn_type: 'canvas_event' | 'session_boundary' }> =>
-      m.role === 'user' && m.turn_type === 'session_boundary'
-  )
-  if (sessionBoundaries.length > 0) {
-    parts.push(sessionBoundaries[sessionBoundaries.length - 1].content)
-  }
-
-  // Step 7 — NEGATIVE CONSTRAINTS block (Expander, Stress-Tester, Observer only).
-  if (rejectionBlock) parts.push(rejectionBlock)
-
-  // Step 8 — Stateless agents (Outer Sub): stop here — only Tier 0 + active node.
-  // No thread history, no rejection injection, no tier 2–4.
-  if (rule.threadType === 'stateless') {
-    for (let i = thread.messages.length - 1; i >= 0; i--) {
-      const msg = thread.messages[i]
-      if (msg.role !== 'user' || msg.turn_type !== 'canvas_event') continue
-
-      const nodeId = 'node_id' in msg ? msg.node_id : undefined
-      const seq = nodeId ? (seqMap.get(nodeId) ?? 0) : 0
-      const node = nodeId ? nodeMap.get(nodeId) : undefined
-      const assistantMsg = asGhostPairMsg(thread.messages[i + 1])
-
-      parts.push(formatTier1(msg as UserCanvasMsg, assistantMsg, seq, node, edges, nodeMap, seqMap, rule, 0))
-      break
-    }
-    return parts.join('\n\n')
-  }
-
-  // Step 9 — Canvas-stateful agents: iterate the thread and sort messages into tier buckets.
-  // Tier 4 items are collected separately for grouping; all others are formatted immediately.
+// Canvas-stateful agents: walk the thread once, bucket every canvas_event turn
+// into its tier (session_boundary/assistant turns are skipped here — they're
+// either rendered elsewhere or only ever read via the next-message lookahead),
+// then format each bucket — Tier 4 grouped into blocks of 5. Returns the
+// blocks in recency-first order (Tier 1 → Tier 4) for the caller to append.
+function serializeTiered(
+  thread: AgentThread,
+  rule: SerializationRule,
+  nodeMap: Map<string, Node>,
+  seqMap: Map<string, number>,
+  edges: Edge[],
+  tierMap: Map<string, Tier>,
+): string[] {
   const tier1Blocks: string[] = []
   const tier2Blocks: string[] = []
   const tier3Blocks: string[] = []
@@ -570,18 +513,100 @@ export async function serialize(
     }
   }
 
-  // Step 10 — Group Tier 4 items into compressed blocks of 5 (oldest first).
+  // Group Tier 4 items into compressed blocks of 5 (oldest first).
   const tier4Blocks: string[] = []
   for (let i = 0; i < tier4Items.length; i += 5) {
     tier4Blocks.push(formatTier4Group(tier4Items.slice(i, i + 5)))
   }
 
-  // Step 11 — Final assembly in recency-first order so the active node is near the top.
-  // Order: Tier 1 (active) → Tier 2 (recent) → Tier 3 (mid) → Tier 4 (compressed oldest)
-  parts.push(...tier1Blocks)
-  parts.push(...tier2Blocks)
-  parts.push(...tier3Blocks)
-  parts.push(...tier4Blocks)
+  // Recency-first order: Tier 1 (active) → Tier 2 (recent) → Tier 3 (mid) → Tier 4 (compressed oldest)
+  return [...tier1Blocks, ...tier2Blocks, ...tier3Blocks, ...tier4Blocks]
+}
+
+// ─── Main serialize() ─────────────────────────────────────────────────────────
+
+// Called by all pipeline functions before agent invocation.
+// Converts the agent's canvas-scoped thread into structured text for the LLM context window.
+// options.triggerNodeId is only used by canvas-map agents (Observer) — see serializeCanvasMap.
+export async function serialize(
+  thread: AgentThread,
+  agentRole: AgentRole,
+  canvas: Canvas,
+  options?: { triggerNodeId?: string },
+): Promise<string> {
+  const rule = SERIALIZATION_RULES[agentRole]
+  logger.info('serialize:start', { canvas_id: canvas.id, agent_role: agentRole, message_count: thread.messages.length, thread_type: rule.threadType })
+
+  // Canvas-map agents don't read this thread's recency tiers at all — their
+  // context is the whole canvas plus their own structure history, both fetched
+  // fresh from their source tables.
+  if (rule.threadType === 'canvas-map') {
+    return serializeCanvasMap(canvas, agentRole, rule, options?.triggerNodeId)
+  }
+
+  // Step 1 — Collect all node IDs referenced across the thread so they can be batch-fetched.
+  const nodeIds = thread.messages
+    .filter((m): m is Extract<ThreadMessage, { role: 'user'; turn_type: 'canvas_event' | 'session_boundary' }> =>
+      m.role === 'user' && m.turn_type === 'canvas_event'
+    )
+    .map(m => ('node_id' in m ? m.node_id : undefined))
+    .filter((id): id is string => Boolean(id))
+
+  // Step 2 — Fetch node metadata, canvas edges, and the rejection block in parallel.
+  // Nodes are fetched individually (no batch endpoint) but all fired at once via Promise.all.
+  const [nodeResults, edges, rejectionBlock] = await Promise.all([
+    Promise.all(nodeIds.map(id => getNode(id).catch(() => null))),
+    getEdgesByCanvas(canvas.id),
+    rule.includeRejectionInsights ? buildRejectionBlock(canvas.id, agentRole) : Promise.resolve(''),
+  ])
+
+  // Step 3 — Build lookup maps used by every formatter.
+  // nodeMap: node_id → Node  |  seqMap: node_id → 1-based position in thread
+  const nodeMap = new Map<string, Node>()
+  for (const n of nodeResults) {
+    if (n) nodeMap.set(n.id, n)
+  }
+
+  const seqMap = new Map<string, number>()
+  let seqCounter = 0
+  for (const msg of thread.messages) {
+    if (msg.role === 'user' && msg.turn_type === 'canvas_event' && 'node_id' in msg && msg.node_id) {
+      seqCounter++
+      seqMap.set(msg.node_id, seqCounter)
+    }
+  }
+
+  // ── Assembly ────────────────────────────────────────────────────────────────
+
+  const parts: string[] = []
+
+  // Step 4 — North Star (Tier 0) — always first, always present.
+  parts.push(northStarBlock(canvas))
+
+  // Step 5 — Most recent session boundary marker, if any.
+  // Placed directly after the north star so the agent sees the current session context.
+  const sessionBoundaries = thread.messages.filter(
+    (m): m is Extract<ThreadMessage, { role: 'user'; turn_type: 'canvas_event' | 'session_boundary' }> =>
+      m.role === 'user' && m.turn_type === 'session_boundary'
+  )
+  if (sessionBoundaries.length > 0) {
+    parts.push(sessionBoundaries[sessionBoundaries.length - 1].content)
+  }
+
+  // Step 6 — NEGATIVE CONSTRAINTS block (Expander, Stress-Tester, Observer only).
+  if (rejectionBlock) parts.push(rejectionBlock)
+
+  // Step 7 — Stateless agents (Outer Sub) stop here — see serializeStateless.
+  if (rule.threadType === 'stateless') {
+    const activeBlock = serializeStateless(thread, rule, nodeMap, seqMap, edges)
+    if (activeBlock) parts.push(activeBlock)
+    return parts.join('\n\n')
+  }
+
+  // Step 8 — Canvas-stateful agents: classify into tiers and format every
+  // bucket — see serializeTiered.
+  const tierMap = classifyTiers(thread.messages)
+  parts.push(...serializeTiered(thread, rule, nodeMap, seqMap, edges, tierMap))
 
   logger.info('serialize:done', { canvas_id: canvas.id, agent_role: agentRole, parts: parts.length })
   return parts.join('\n\n')
