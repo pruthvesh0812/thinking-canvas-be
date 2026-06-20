@@ -35,13 +35,13 @@ stale-after-days: 90
 
 - **type** — one of `feature`, `fix`, `chore`, `refactor`, `docs`, `test` — matches the change's nature
 - **short-title** — kebab-case, 2-5 words, describes the change itself (not a ticket number)
-- **timestamp** — UTC, `YYYYMMDDHHmm`
+- **timestamp** — UTC, `YYYY-MM-DDTHHmm` (colon isn't valid in git ref names, so the hour/minute pair has no separator)
 
 ```bash
 # ✅
-feature/rejection-insights-injection-202606201430
-fix/spawn-descriptor-null-id-202606201501
-chore/bump-mastra-core-202606210900
+feature/rejection-insights-injection-2026-06-20T1430
+fix/spawn-descriptor-null-id-2026-06-20T1501
+chore/bump-mastra-core-2026-06-21T0900
 
 # ❌ Never random/auto-generated names
 claude/admiring-albattani-nfsixe
