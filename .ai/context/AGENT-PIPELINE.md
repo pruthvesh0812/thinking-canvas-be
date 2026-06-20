@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-08
-verified-against: ThinkingCanvas_TechnicalBuild.docx (post single-user refactor)
+last-verified: 2026-06-18
+verified-against: ThinkingCanvas_TechnicalBuild.docx (post Observer canvas-map context model)
 stale-after-days: 30
 ---
 
@@ -50,7 +50,7 @@ Inngest worker
   │     │     Apply tiered node-anchored format (per-agent rules)
   │     │     Inject active rejection_insights as NEGATIVE CONSTRAINTS block
   │     │
-  │     ├── Step 7: Agent streams (gemini-3.1-flash-lite)
+  │     ├── Step 7: Agent streams (model per LLM-LAYER.md routing)
   │     │     for await (token of agent.stream(context))
   │     │       redis.publish(..., {type:'chunk', target:context_ghost_id, data:token})
   │     │     (then question node tokens if present)
@@ -142,6 +142,78 @@ NEGATIVE CONSTRAINTS (active):
 ```
 
 After each agent turn: decrement `turns_remaining` for temporal deferrals. Set `active=false` when `turns_remaining=0`.
+
+The Observer additionally receives an OBSERVER CONNECTION FEEDBACK block, built
+from `rejection_insights` rows where `target_edge_id` is set (see "Observer
+Structure" below + SERIALIZATION.md → Observer Connection Feedback).
+
+---
+
+## Observer Structure
+
+The Observer is not a ghost-pair agent — `runObserver()` (`src/agents/observer.ts`)
+calls `.generate()` against a Zod schema instead of `.stream()`ing prose, and
+returns `{ anchor_node_ids, nodes, edges }` (or `null` when discarded) with
+labels already remapped to backend-assigned `crypto.randomUUID()` ghost IDs
+(never trust LLM-emitted IDs — same rule as SpawnDescriptor below).
+
+```
+runObserver() output (ObserverObservation | null):
+  anchor_node_ids: string[]            — existing canvas nodes to highlight
+  nodes: ObservationNode[]             — { ghost_id, level, node_type, content }
+  edges: { from_id, to_id }[]          — from_id is an anchor id OR another node's ghost_id
+```
+
+`serialized_context` for `runObserver()` does NOT come from the recency-tiered
+pipeline the other agents use — Observer's `SerializationRule.threadType` is
+`'canvas-map'`, which routes `serialize()` through `serializeCanvasMap()`
+instead of `classifyTiers()` + Tier 1–4 formatters (see SERIALIZATION.md →
+Observer Context Model). The pipeline calling `runObserver()` should pass the
+triggering node through `serialize(thread, 'observer', canvas, { triggerNodeId })`
+— this 4th argument is optional and only consumed by the canvas-map path; every
+other agent's call site is unaffected. The Observer's own thread turn is a
+distinct `ThreadMessage` variant, `turn_type: 'observer_structure'` (points at
+`structure_id`, not a ghost pair) — see types/index.ts.
+
+### Validation (in `runObserver`, before ghost IDs are minted)
+
+`validateObservation()` rejects malformed LLM output:
+- **Anchors** must be real nodes ON THIS CANVAS — fetched + canvas-checked
+  against the DB (the service-role client bypasses RLS, so the check is manual).
+- **Every edge endpoint** must resolve: `to` to a known node label, `from` to a
+  known node label OR a validated anchor id. No silent fallthrough.
+- **Strict level-+1**: anchor→level0, level k→level k+1 only. Monotonic levels
+  make the graph acyclic by construction (a cycle would need a level > itself)
+  and forbid level-skips — no separate cycle walk needed.
+- **Exactly one level-0 node**; every observation node has ≥1 incoming edge (no orphans).
+
+### Persistence + interaction (once the pipeline/route is built — features 8-10, not yet started)
+
+```
+1. INSERT observer_structures  { canvas_id, session_id, thread_id, anchor_node_ids, nodes }
+2. INSERT observer_edges       one row per edge, structure_id = the row above, status='pending'
+3. Frontend highlights anchor_node_ids; hover reveals the structure from observer_edges
+4. ACCEPT (per-edge): mark edge accepted. A node at to_id crosses into canvas
+   only once ALL its incoming edges are accepted — it is a synthesis of all of them.
+5. REJECT (re-think trigger, NOT a local delete) — BATCHES across edges:
+     a. user supplies connection_feedback (not_related|wrong_direction|too_indirect|already_obvious)
+        for one OR MORE edges; the structure stays visible while they flag.
+     b. INSERT a rejection_insights row per flagged edge, with target_edge_id +
+        connection_feedback set, rejection_reason left null (see DATABASE-SCHEMA.md)
+     c. once the user is done, tear down the PENDING structure (already-accepted
+        nodes stay committed)
+     d. re-invoke runObserver({ rethink: { previous, rejected_edges } }) with ALL
+        flagged edges at once
+        → revised structure (every rejected reference dropped, affected nodes
+          rewritten as a synthesis of survivors), or
+        → null (observation discarded — survivors are hollow)
+```
+
+Feedback is per-edge, but a rejection reconsiders the whole observation — the
+Observer's worst failure mode is a false cross-branch pattern, so a bad
+reference should make it re-think, not just lose one link. Rejections batch
+because the user may spot several improper references at once; the structure
+must not vanish on the first before they've judged the rest.
 
 ---
 

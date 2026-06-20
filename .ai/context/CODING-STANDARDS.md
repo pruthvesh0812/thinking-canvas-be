@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-08
-verified-against: ThinkingCanvas_TechnicalBuild.docx (post single-user refactor)
+last-verified: 2026-06-18
+verified-against: ThinkingCanvas_TechnicalBuild.docx (post single-user refactor; added exhaustiveness-guard convention)
 stale-after-days: 90
 ---
 
@@ -69,6 +69,19 @@ const canvasEventSchema = z.object({
 
 // ❌ Never use `any`
 // ❌ Never use type assertions (as X) unless unavoidable
+
+// ✅ Narrow a discriminated union with a type guard instead of casting —
+// ThreadMessage's assistant variants are a discriminated union on turn_type
+// (ghost_pair | observer_structure | ...future variants). A formatter that
+// only handles one variant should narrow to it explicitly, so adding a new
+// variant later forces every such call site to be re-examined by the
+// compiler instead of silently reaching a field that isn't there at runtime.
+type GhostPairMsg = Extract<ThreadMessage, { role: 'assistant'; turn_type: 'ghost_pair' }>
+function asGhostPairMsg(msg: ThreadMessage | undefined): GhostPairMsg | null {
+  return msg && msg.role === 'assistant' && msg.turn_type === 'ghost_pair' ? msg : null
+}
+// ❌ const gp = (msg as AssistantMsg).ghost_pair   — unsafe, survives a missing case
+// ✅ const gp = asGhostPairMsg(msg)?.ghost_pair    — null when it isn't this variant
 ```
 
 ---
@@ -76,25 +89,37 @@ const canvasEventSchema = z.object({
 ## Mastra Patterns
 
 ```typescript
-// ✅ gemini-3.1-flash-lite for content agents
-// ✅ thinking:high for Observer and Outer Sub
-import { google } from '@ai-sdk/google'
+// ✅ All model instantiation via src/lib/llm.ts — never import @ai-sdk/google directly (see LLM-LAYER.md)
+import { models } from '../lib/llm.js'
 
-export const observerAgent = new Agent({
-  name: 'Observer',
-  model: google('gemini-3.1-flash-lite', {
-    thinkingConfig: { thinkingBudget: -1 }  // -1 = high
-  }),
-  instructions: OBSERVER_SYSTEM_PROMPT,
-  tools: { get_big_picture, get_content, traverse_trail }
+// ✅ gemini-2.5-flash-lite (models.content()) for content agents — Expander, Stress-Tester, Articulator
+export const expanderAgent = new Agent({
+  id: 'expander',
+  name: 'Expander',
+  model: models.content(),
+  instructions: EXPANDER_SYSTEM_PROMPT,
+  tools: { get_window, traverse_trail, semantic_promote }
 })
 
-// ✅ gemini-2.5-flash for Attunement/Orchestrator/Summary (thinking:OFF)
+// ✅ gemini-2.5-flash (models.fast()) + thinking:high for Observer and Outer Sub
+// thinkingConfig is passed as providerOptions at call-site, not baked into the model
+export const observerAgent = new Agent({
+  id: 'observer',
+  name: 'Observer',
+  model: models.fast(),
+  instructions: OBSERVER_SYSTEM_PROMPT,
+  tools: { get_big_picture, get_content, traverse_trail, get_siblings }
+})
+
+const stream = await observerAgent.stream(serializedContext, {
+  providerOptions: { google: models.thinking('high') }
+})
+
+// ✅ gemini-2.5-flash (models.fast()) for Attunement/Orchestrator/Summary (thinking:OFF)
 export const attunementAgent = new Agent({
+  id: 'attunement',
   name: 'Attunement',
-  model: google('gemini-2.5-flash', {
-    thinkingConfig: { thinkingBudget: 0 }   // 0 = OFF
-  }),
+  model: models.fast(),
   instructions: ATTUNEMENT_SYSTEM_PROMPT
 })
 

@@ -29,13 +29,13 @@ Most libraries have llms.txt files optimized for AI consumption. Fetch these bef
 
 ### Google AI (Gemini)
 - **Docs:** https://ai.google.dev/gemini-api/docs
+- **All instantiation via `src/lib/llm.ts`** — never import `@ai-sdk/google` directly (see LLM-LAYER.md)
 - **Models in use:**
-  - `gemini-3.1-flash-lite` — Expander, Stress-Tester, Articulator, Observer, Outer Sub
-  - `gemini-2.5-flash` — Attunement, Orchestrator, Directional Summary, Rejection Insights
+  - `gemini-2.5-flash-lite` (`models.content()`) — Expander, Stress-Tester, Articulator
+  - `gemini-2.5-flash` (`models.fast()`) — Attunement, Orchestrator, Observer, Outer Sub, Directional Summary, Rejection Insights
   - `gemini-embedding-2` — node content embeddings (3072 dimensions)
-- **Thinking config:** `thinkingConfig: { thinkingBudget: -1 }` = high, `{ thinkingBudget: 0 }` = OFF
+- **Thinking config:** `models.thinking('high')` = `{ thinkingConfig: { thinkingBudget: 8000 } }`, `models.thinking('low')` = `{ thinkingConfig: { thinkingBudget: 1024 } }`. Passed via `providerOptions: { google: ... }` at call-site (Observer, Outer Sub use `'high'`; Summary, Rejection Insights use `'low'`) — never baked into the model instance.
 - **Embedding call:** `client.models.embedContent({ model: 'gemini-embedding-2', content: ... })`
-- **Key:** Model string is `gemini-3.1-flash-lite` (not preview, not flash-lite-preview — that was deprecated May 2026)
 
 ### Upstash Redis (Pub/Sub)
 - **Docs:** https://upstash.com/docs/redis
@@ -79,12 +79,12 @@ Most libraries have llms.txt files optimized for AI consumption. Fetch these bef
 
 ## Model Quick Reference
 
-| Need | Model string | Provider |
+| Need | llm.ts helper | Provider |
 |---|---|---|
-| Content generation (Expander, Articulator, Stress-Tester) | `gemini-3.1-flash-lite` | Google AI |
-| Deep reasoning (Observer, Outer Sub) | `gemini-3.1-flash-lite` + thinking:high | Google AI |
-| Classification/routing (Attunement, Orchestrator) | `gemini-2.5-flash` + thinking:OFF | Google AI |
-| Structured output (Summary, Rejection Insights) | `gemini-2.5-flash` + thinking:low | Google AI |
+| Content generation (Expander, Articulator, Stress-Tester) | `models.content()` (gemini-2.5-flash-lite) | Google AI |
+| Deep reasoning (Observer, Outer Sub) | `models.fast()` + `models.thinking('high')` | Google AI |
+| Classification/routing (Attunement, Orchestrator) | `models.fast()` (thinking OFF) | Google AI |
+| Structured output (Summary, Rejection Insights) | `models.fast()` + `models.thinking('low')` | Google AI |
 | Embeddings | `gemini-embedding-2` | Google AI |
 
 Single provider: one `GOOGLE_AI_API_KEY` for everything.

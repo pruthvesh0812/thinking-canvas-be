@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-08
-verified-against: ThinkingCanvas_TechnicalBuild.docx, Section 07 (post-architecture-update)
+last-verified: 2026-06-18
+verified-against: ThinkingCanvas_TechnicalBuild.docx, Section 07 (post Observer canvas-map context model)
 stale-after-days: 30
 ---
 
@@ -36,6 +36,27 @@ NEGATIVE CONSTRAINTS (active — do not violate):
 
 Temporal deferrals decrement `turns_remaining` after each agent turn. When `turns_remaining=0`, set `active=false`.
 
+### Observer Connection Feedback (Observer only — injected after NEGATIVE CONSTRAINTS)
+
+The Observer doesn't write ghost pairs — it proposes a structure of edges, each
+individually accepted/rejected by the user. Rejected edges produce a SEPARATE
+category of `rejection_insights` row (`target_edge_id` + `connection_feedback`
+set, `rejection_reason` null — see DATABASE-SCHEMA.md → rejection_insights).
+`buildRejectionBlock(canvas_id, agentRole)` renders these as their own block,
+and only when `agentRole === 'observer'`:
+
+```
+OBSERVER CONNECTION FEEDBACK (active — do not repeat these connections):
+─────────────────────────────────────────────
+[APPROACH PIVOT]       These two nodes are not actually related this way
+                       Source: seq:22, reason: Not Related
+[HARD BLOCK]           Needs an intermediate bridge node — don't jump directly
+                       Source: seq:25, reason: Too Indirect
+─────────────────────────────────────────────
+```
+
+`connection_feedback` values: `not_related | wrong_direction | too_indirect | already_obvious`.
+
 ---
 
 ## Node-Anchored Format
@@ -68,6 +89,71 @@ The thread spans sessions. Add session boundary context at the start of each new
 ```
 
 The north star anchor is CANVAS-level — it never changes across sessions.
+
+---
+
+## Observer Context Model (bird's-eye, not recency-tiered)
+
+The 4-tier system below is a recency/linearization model — right for the
+conversational agents, wrong for the Observer. The Observer's job is
+cross-session, cross-branch drift and pattern detection, which means the
+material it most needs (older nodes, sibling branches) is exactly what the
+tiers compress away or drop, and the canvas itself is a branching DAG that
+tiering forces into a single line.
+
+Instead, `SerializationRule.threadType: 'canvas-map'` (Observer only) routes
+through `serializeCanvasMap()` in `src/serializer/index.ts`, which bypasses
+`classifyTiers()` and the Tier 1–4 formatters entirely. It builds the
+Observer's context from three blocks, all read fresh from source tables —
+never reconstructed from the agent's own thread log, so the view can't go
+stale or miss a branch the thread didn't happen to record:
+
+1. **CANVAS MAP** — every node on the canvas (`getAllByCanvas`), grouped by
+   session, summary-only, with full INCOMING/OUTGOING edge lines per node
+   (`getEdgesByCanvas`). This is the spatial picture — the whole graph, briefly.
+2. **CURRENT FOCUS** — the last 5 nodes (`getRecentNodes`), oldest first, with
+   the node that triggered this Observer run flagged `★TRIGGER`. A light
+   recency pointer on top of the full map — "where attention is right now" —
+   not a replacement for it.
+3. **PAST OBSERVATIONS** — the Observer's own prior structures
+   (`getStructuresByCanvas` / `getEdgesByStructures`), each node shown with its
+   per-edge accept/reject outcome so the Observer doesn't repeat a
+   structure the user already worked through. Empty until pipeline write
+   support for `observer_structures`/`observer_edges` lands (features 8–10).
+
+Order: north star → NEGATIVE CONSTRAINTS / OBSERVER CONNECTION FEEDBACK →
+CANVAS MAP → CURRENT FOCUS → PAST OBSERVATIONS.
+
+```
+════════════════════════════════════════════════
+CANVAS MAP (all sessions — summary only)
+─── session a1b2c3d4 ───
+[seq:3 | nodeId_abc | establishes]
+  "establishes: convergence is felt internally"
+  INCOMING: none yet
+  OUTGOING: ──contradicts──▶ seq:7
+════════════════════════════════════════════════
+
+────────────────────────────────────────────────
+CURRENT FOCUS (most recent activity)
+[seq:7 | nodeId_xyz | contradicts | ★TRIGGER]
+  "contradicts: recognition isn't a decision"
+────────────────────────────────────────────────
+
+────────────────────────────────────────────────
+PAST OBSERVATIONS (this canvas)
+[structure:f00dca7e | anchors: nodeId_a, nodeId_b]
+  (level 0, pattern) "..." — accepted
+────────────────────────────────────────────────
+```
+
+For cursor tools (`get_big_picture`, `get_siblings`, `traverse_trail`,
+`get_content`) the Observer still calls at runtime to drill into a specific
+branch or pull full content for one node — the map above is the standing
+context, tools are for follow-up. Drill-down depth still uses the same
+node-anchored format as the tiers below (e.g. `get_big_picture`'s output).
+`options.triggerNodeId` on `serialize()` is only consumed by this path —
+the existing 3-argument call signature still works for every other agent.
 
 ---
 
@@ -134,16 +220,33 @@ RESPONSE PATTERN: accepted:3 rejected:1 | 1 rejection → hard_block active
 
 | Rule | Expander | Stress-Tester | Observer | Articulator | Outer Sub |
 |---|---|---|---|---|---|
-| Rejection Insights block | Yes — always first | Yes | Yes | No (stateless) | No (stateless) |
+| Rejection Insights block | Yes — always first | Yes | Yes + own OBSERVER CONNECTION FEEDBACK block | No | No (stateless) |
 | North star (canvas-level) | Full | Full | Full | Full | Full |
 | Click moment | Full if exists | Full — critical | Full if exists | No | No |
-| Active node | Full + attunement | Full | Summary only | Full (both) | Full (both endpoints) |
-| Recent (3) | Full content | Full + flag contradictions | Summary only | Full both trails | No trail |
-| Mid (4-10) | Summary + marker | Summary + FLAG contradictions | Summary only | N/A stateless | No |
-| Compressed (10+) | Trail + markers | Extract contradictions | Trail only | N/A | No |
+| Context model | Recency tiers | Recency tiers | **Canvas map** (see below) | Recency tiers | Active node only |
+| Active node | Full + attunement | Full | n/a — see canvas map | Full (both) | Full (both endpoints) |
+| Recent (3) | Full content | Full + flag contradictions | n/a — see canvas map | Full both trails | No trail |
+| Mid (4-10) | Summary + marker | Summary + FLAG contradictions | n/a — see canvas map | N/A | No |
+| Compressed (10+) | Trail + markers | Extract contradictions | n/a — see canvas map | N/A | No |
 | Attunement | Yes | No | No | No | No |
-| Ghost history | Own only | None | Summary | None | None |
-| Thread type | Canvas-stateful | Canvas-stateful | Canvas-stateful | Stateless per edge | Stateless per edge |
+| Ghost history | Own only | None | n/a — own structures shown in PAST OBSERVATIONS | None | None |
+| Thread type | Canvas-stateful | Canvas-stateful | **Canvas-map** | Canvas-stateful | Stateless per edge |
+
+**Observer bypasses the tiers above entirely.** Its rule has
+`threadType: 'canvas-map'`, which routes `serialize()` through
+`serializeCanvasMap()` instead of the Tier 1–4 pipeline — see
+"Observer Context Model" above for the CANVAS MAP / CURRENT FOCUS /
+PAST OBSERVATIONS blocks it receives instead.
+
+**Observer output is structured, not prose.** `runObserver()` calls `.generate()`
+with a Zod schema (`{ anchor_node_ids, nodes: [{label, level, node_type, content}],
+edges: [{from, to}] }`), not `.stream()`. There is no `[NODE_TYPE]`/`[QUESTION]`
+text format — see CORE-CONCEPTS.md → The AI Node Architecture and
+AGENT-PIPELINE.md → Observer Structure for how this gets persisted. Its thread
+turn is also its own `ThreadMessage` variant — `turn_type: 'observer_structure'`,
+distinct from `ghost_pair` — since it points at a structure_id rather than a
+ghost pair (see types/index.ts → ThreadMessage and CODING-STANDARDS.md for the
+exhaustiveness-guard convention this requires of any future variant).
 
 ---
 

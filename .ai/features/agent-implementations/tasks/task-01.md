@@ -8,7 +8,7 @@ status: draft
 ---
 
 ## Scope
-Implement Attunement and Orchestrator — the two infrastructure agents that route every agent pipeline call. These produce structured output (not streamed), use gemini-2.5-flash with thinking OFF.
+Implement Attunement and Orchestrator — the two infrastructure agents that route every agent pipeline call. These produce structured output (not streamed), use `models.fast()` (gemini-2.5-flash) from `src/lib/llm.ts` with thinking OFF (no providerOptions).
 
 ## Files to Touch
 ```
@@ -20,7 +20,7 @@ CREATE:
 ## Attunement agent
 
 ```typescript
-// Model: gemini-2.5-flash, thinking:OFF (thinkingBudget: 0)
+// Model: models.fast() (gemini-2.5-flash), thinking OFF
 // No tools
 // Structured output: AttunementState
 // Input: last 3-5 nodes from session (read from Supabase, NOT via tool)
@@ -35,7 +35,7 @@ Attunement reads the QUALITY of thinking from language:
 ## Orchestrator agent
 
 ```typescript
-// Model: gemini-2.5-flash, thinking:OFF (thinkingBudget: 0)
+// Model: models.fast() (gemini-2.5-flash), thinking OFF
 // No tools
 // Input: AttunementState + canvas signals + subscription tier
 // Output: { route: AgentRole, question_style: string }
@@ -59,8 +59,8 @@ Fetch https://mastra.ai/llms.txt for current Agent API. Load `.ai/skills/create-
 `core-types` story (AttunementState type), `ghost-streaming` task-01 (`getAvailableAgents` from tier.ts).
 
 ## Definition of Done
-- [ ] `attunementAgent` uses `gemini-2.5-flash` + `thinkingBudget: 0`
-- [ ] `orchestratorAgent` uses `gemini-2.5-flash` + `thinkingBudget: 0`
+- [ ] `attunementAgent` uses `models.fast()` from `src/lib/llm.ts` (gemini-2.5-flash, thinking OFF)
+- [ ] `orchestratorAgent` uses `models.fast()` from `src/lib/llm.ts` (gemini-2.5-flash, thinking OFF)
 - [ ] System prompts are constants (no dynamic interpolation from user input)
 - [ ] Orchestrator only routes to agents in `available_agents` list
 - [ ] `npm run build` compiles

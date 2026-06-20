@@ -1,5 +1,5 @@
 ---
-last-verified: 2026-06-09
+last-verified: 2026-06-17
 stale-after-days: 60
 ---
 
@@ -13,7 +13,7 @@ stale-after-days: 60
 ## Checklist before writing
 
 1. Identify the agent role (Expander / Stress-Tester / Articulator / Observer / Outer Sub / Attunement / Orchestrator)
-2. Confirm model and thinking config from ARCHITECTURE.md → Agent Model Routing table
+2. Confirm model and thinking config from `src/lib/llm.ts` / LLM-LAYER.md (also summarised in ARCHITECTURE.md → Agent Model Routing table)
 3. Identify which cursor tools the agent needs (AGENT-PIPELINE.md → Cursor Tools Reference)
 4. Write the system prompt as a constant — never build from user input
 5. Does this agent get rejection_insights injected? (Expander, Stress-Tester, Observer → YES. Articulator, Outer Sub → NO)
@@ -33,8 +33,8 @@ src/agents/<name>.ts   # camelCase + Agent export
 ```typescript
 // src/agents/<name>.ts
 import { Agent } from '@mastra/core/agent'
-import { google } from '@ai-sdk/google'
-import { get_content } from '../tools/get-content'
+import { models } from '../lib/llm.js'
+import { get_content } from '../tools/get-content.js'
 // import other tools as needed
 
 // System prompt is a constant — never interpolated from user data
@@ -43,31 +43,33 @@ You are the <Role> for ThinkingCanvas...
 ` as const
 
 export const agentNameAgent = new Agent({
+  id: '<agent-id>',
   name: '<AgentName>',
-  model: google('<model-string>', {
-    thinkingConfig: { thinkingBudget: <budget> }
-    // -1 = high thinking (Observer, Outer Sub)
-    //  0 = OFF (Attunement, Orchestrator)
-    // omit for auto (Expander, Stress-Tester, Articulator)
-  }),
+  model: models.content(), // or models.fast() — see table below
   instructions: AGENT_NAME_SYSTEM_PROMPT,
   tools: { get_content /*, other tools */ },
 })
+
+// For Observer / Outer Sub: pass thinking config as providerOptions at call-site,
+// never bake it into the model instance:
+// await agentNameAgent.stream(serializedContext, {
+//   providerOptions: { google: models.thinking('high') },
+// })
 ```
 
 ---
 
 ## Model + Thinking config reference
 
-| Agent | Model string | thinkingBudget |
+| Agent | llm.ts helper | Thinking |
 |---|---|---|
-| Expander | `gemini-3.1-flash-lite` | omit (auto) |
-| Stress-Tester | `gemini-3.1-flash-lite` | omit (auto) |
-| Articulator | `gemini-3.1-flash-lite` | omit (auto) |
-| Observer | `gemini-3.1-flash-lite` | `-1` (high) |
-| Outer Subconscious | `gemini-3.1-flash-lite` | `-1` (high) |
-| Attunement | `gemini-2.5-flash` | `0` (OFF) |
-| Orchestrator | `gemini-2.5-flash` | `0` (OFF) |
+| Expander | `models.content()` (gemini-2.5-flash-lite) | OFF |
+| Stress-Tester | `models.content()` (gemini-2.5-flash-lite) | OFF |
+| Articulator | `models.content()` (gemini-2.5-flash-lite) | OFF |
+| Observer | `models.fast()` (gemini-2.5-flash) | `models.thinking('high')` via providerOptions |
+| Outer Subconscious | `models.fast()` (gemini-2.5-flash) | `models.thinking('high')` via providerOptions |
+| Attunement | `models.fast()` (gemini-2.5-flash) | OFF |
+| Orchestrator | `models.fast()` (gemini-2.5-flash) | OFF |
 
 ---
 
@@ -84,6 +86,18 @@ for await (const token of stream.textStream) {
 }
 ```
 
+**Exception — Observer and Attunement use `.generate()` with structured output,**
+never `.stream()`. Both produce a fixed-shape object (Attunement: classifier
+fields; Observer: `{anchor_node_ids, nodes, edges}` — see `src/agents/observer.ts`)
+rather than freeform prose tokens, so there's nothing to stream token-by-token:
+
+```typescript
+const { object } = await agentNameAgent.generate(serializedContext, {
+  structuredOutput: { schema: agentOutputSchema },
+  providerOptions: { google: models.thinking('high') }, // Observer only
+})
+```
+
 ---
 
 ## Prohibited
@@ -91,6 +105,8 @@ for await (const token of stream.textStream) {
 ```typescript
 // ❌ Never use agent.memory — threads are managed in Supabase (src/db/threads.ts)
 // ❌ Never build system prompt from user input
-// ❌ Never call agent.generate() for content agents — must stream
-// ❌ Never use a model not listed in ARCHITECTURE.md Agent Model Routing
+// ❌ Never call agent.generate() for prose content agents — must stream (Observer/Attunement are the only structured-output exceptions)
+// ❌ Never import @ai-sdk/google directly — use models.* from src/lib/llm.ts (see LLM-LAYER.md)
+// ❌ Never bake thinkingConfig into the model instance — pass via providerOptions at call-site
+// ❌ Never trust ghost/node IDs emitted by the LLM — Observer must remap local labels to crypto.randomUUID() server-side
 ```

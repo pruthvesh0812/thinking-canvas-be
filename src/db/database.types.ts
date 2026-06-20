@@ -309,40 +309,133 @@ export type Database = {
           },
         ]
       }
+      observer_edges: {
+        Row: {
+          created_at: string
+          from_id: string
+          id: string
+          status: string
+          structure_id: string
+          to_id: string
+        }
+        Insert: {
+          created_at?: string
+          from_id: string
+          id?: string
+          status?: string
+          structure_id: string
+          to_id: string
+        }
+        Update: {
+          created_at?: string
+          from_id?: string
+          id?: string
+          status?: string
+          structure_id?: string
+          to_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "observer_edges_structure_id_fkey"
+            columns: ["structure_id"]
+            isOneToOne: false
+            referencedRelation: "observer_structures"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      observer_structures: {
+        Row: {
+          anchor_node_ids: string[]
+          canvas_id: string
+          created_at: string
+          id: string
+          nodes: Json
+          session_id: string | null
+          thread_id: string | null
+        }
+        Insert: {
+          anchor_node_ids: string[]
+          canvas_id: string
+          created_at?: string
+          id?: string
+          nodes?: Json
+          session_id?: string | null
+          thread_id?: string | null
+        }
+        Update: {
+          anchor_node_ids?: string[]
+          canvas_id?: string
+          created_at?: string
+          id?: string
+          nodes?: Json
+          session_id?: string | null
+          thread_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "observer_structures_canvas_id_fkey"
+            columns: ["canvas_id"]
+            isOneToOne: false
+            referencedRelation: "canvases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "observer_structures_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "observer_structures_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "agent_threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rejection_insights: {
         Row: {
           active: boolean
           canvas_id: string
+          connection_feedback: string | null
           created_at: string
           id: string
           insight_points: Json
-          rejection_reason: string
+          rejection_reason: string | null
           session_id: string | null
           severity: string
+          target_edge_id: string | null
           thread_id: string | null
           turns_remaining: number | null
         }
         Insert: {
           active?: boolean
           canvas_id: string
+          connection_feedback?: string | null
           created_at?: string
           id?: string
           insight_points?: Json
-          rejection_reason: string
+          rejection_reason?: string | null
           session_id?: string | null
           severity: string
+          target_edge_id?: string | null
           thread_id?: string | null
           turns_remaining?: number | null
         }
         Update: {
           active?: boolean
           canvas_id?: string
+          connection_feedback?: string | null
           created_at?: string
           id?: string
           insight_points?: Json
-          rejection_reason?: string
+          rejection_reason?: string | null
           session_id?: string | null
           severity?: string
+          target_edge_id?: string | null
           thread_id?: string | null
           turns_remaining?: number | null
         }
@@ -359,6 +452,13 @@ export type Database = {
             columns: ["session_id"]
             isOneToOne: false
             referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rejection_insights_target_edge_id_fkey"
+            columns: ["target_edge_id"]
+            isOneToOne: false
+            referencedRelation: "observer_edges"
             referencedColumns: ["id"]
           },
           {

@@ -8,7 +8,7 @@ status: draft
 ---
 
 ## Scope
-Implement Observer and Outer Subconscious — the two deep-thinking agents that use `gemini-3.1-flash-lite` with `thinkingBudget: -1` (high).
+Implement Observer and Outer Subconscious — the two deep-thinking agents that use `models.fast()` (gemini-2.5-flash) from `src/lib/llm.ts` with `providerOptions: { google: models.thinking('high') }` (thinkingBudget 8000) passed at call-site.
 
 ## Files to Touch
 ```
@@ -20,7 +20,7 @@ CREATE:
 ## Observer agent
 
 ```typescript
-// Model: gemini-3.1-flash-lite, thinkingBudget: -1 (high)
+// Model: models.fast() (gemini-2.5-flash) + providerOptions: { google: models.thinking('high') }
 // Tools: get_big_picture, get_content, traverse_trail, get_siblings
 // Trigger: continuous + Session Complete
 // Job: bird's eye spatial map + drift detection vs original_intent (north star)
@@ -38,7 +38,7 @@ At Session Complete: queued observations become suggestions the user can accept 
 ## Outer Subconscious agent
 
 ```typescript
-// Model: gemini-3.1-flash-lite, thinkingBudget: -1 (high)
+// Model: models.fast() (gemini-2.5-flash) + providerOptions: { google: models.thinking('high') }
 // Tools: get_content (only — no trail, no window)
 // Trigger: question edge drawn between two nodes (edge_type='question')
 // Stateless — no thread history (like Articulator)
@@ -54,18 +54,20 @@ Outer Subconscious is the most creative agent. It receives:
 ## High thinking config
 
 ```typescript
-import { google } from '@ai-sdk/google'
+import { models } from '../lib/llm.js'
 
-model: google('gemini-3.1-flash-lite', {
-  thinkingConfig: { thinkingBudget: -1 }  // -1 = high thinking
-})
+// model instance — thinking OFF by default
+model: models.fast()
+
+// at call-site (stream/generate options) — thinkingBudget: 8000 ('high')
+providerOptions: { google: models.thinking('high') }
 ```
 
 ## Depends On
 task-02 must be complete (parallel agents — can implement simultaneously, but same story).
 
 ## Definition of Done
-- [ ] Both agents use `gemini-3.1-flash-lite` with `thinkingBudget: -1`
+- [ ] Both agents use `models.fast()` with `providerOptions: { google: models.thinking('high') }` passed at call-site
 - [ ] Observer serialization receives summary-only view of Tier 2+ (enforced by serializer rules)
 - [ ] Outer Subconscious is stateless — `threadType: 'stateless'` in serializer rules
 - [ ] System prompts are constants

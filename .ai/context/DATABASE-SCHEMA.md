@@ -1,5 +1,5 @@
 ---
-last-verified: 2026-06-11
+last-verified: 2026-06-17
 stale-after-days: 60
 ---
 
@@ -23,6 +23,8 @@ All tables live in the `public` schema (Supabase default). RLS is enabled on eve
 8. [ai_contributions](#8-ai_contributions)
 9. [session_learnings](#9-session_learnings)
 10. [subscriptions](#10-subscriptions)
+11. [observer_structures](#11-observer_structures)
+12. [observer_edges](#12-observer_edges)
 
 ---
 
@@ -141,7 +143,12 @@ A snapshot of the user's cognitive state at a point in time, produced by the Att
 
 ## 7. rejection_insights
 
-Structured negative constraints generated when a user rejects a ghost node pair. Injected into subsequent agent prompts to prevent repeating the same mistake.
+Structured negative constraints generated when a user rejects a ghost node pair
+OR an Observer edge. Injected into subsequent agent prompts to prevent repeating
+the same mistake. Two mutually exclusive categories per row, enforced by
+`rejection_insights_category_xor`:
+- **Content category** (Expander/Stress-Tester/Observer ghost rejections): `rejection_reason` set, `target_edge_id`/`connection_feedback` null
+- **Connection category** (Observer edge rejections only): `target_edge_id`/`connection_feedback` set, `rejection_reason` null
 
 | Column | Type | Use |
 |---|---|---|
@@ -149,11 +156,13 @@ Structured negative constraints generated when a user rejects a ghost node pair.
 | `canvas_id` | `UUID FK → canvases` | Canvas scope |
 | `session_id` | `UUID FK → sessions nullable` | Session that produced this rejection |
 | `thread_id` | `UUID FK → agent_threads nullable` | Which agent's thread produced the rejected ghost |
-| `rejection_reason` | `TEXT NOT NULL` | User-selected reason: `too_abstract`, `too_technical`, or `skip_for_now` |
+| `rejection_reason` | `TEXT nullable` | Content category only. User-selected reason: `too_abstract`, `too_technical`, or `skip_for_now` |
 | `severity` | `TEXT NOT NULL` | `hard_block` (avoid completely), `approach_pivot` (keep idea, change approach), or `temporal_deferral` (pause for N turns) |
 | `insight_points` | `JSONB` | Array of `InsightPoint` objects — the actual constraint text injected into prompts (e.g. "Avoid high-level analogies") |
 | `turns_remaining` | `INT nullable` | For `temporal_deferral` only — counts down from N to 0. Decremented after each agent turn via `decrement_insight_turns()` RPC. NULL for non-temporal severities. |
 | `active` | `BOOLEAN` | `true` = injected into prompts. Set to `false` when `turns_remaining` reaches 0 (temporal) or manually deactivated. Partial index on `(canvas_id) WHERE active = TRUE` for fast lookup. |
+| `target_edge_id` | `UUID FK → observer_edges nullable` | Connection category only. The specific rejected edge this feedback is about |
+| `connection_feedback` | `TEXT nullable` | Connection category only: `not_related`, `wrong_direction`, `too_indirect`, or `already_obvious` — see CORE-CONCEPTS.md → The Observer Structure |
 | `created_at` | `TIMESTAMPTZ` | Creation timestamp |
 
 **RLS:** Access via canvas ownership.
@@ -214,6 +223,50 @@ Stripe subscription sync — one row per user. Drives tier enforcement in the Or
 
 ---
 
+## 11. observer_structures
+
+One row per Observer invocation. The Observer never writes a ghost pair into a
+thread — it highlights existing canvas nodes (anchors) and proposes a
+hierarchical DAG of new observation nodes. See CORE-CONCEPTS.md → The Observer
+Structure for the user-facing model.
+
+| Column | Type | Use |
+|---|---|---|
+| `id` | `UUID PK` | Structure identifier — referenced by `observer_edges.structure_id` |
+| `canvas_id` | `UUID FK → canvases` | Canvas scope |
+| `session_id` | `UUID FK → sessions nullable` | Session active when the Observer ran |
+| `thread_id` | `UUID FK → agent_threads nullable` | The Observer's own thread |
+| `anchor_node_ids` | `UUID[]` | Existing canvas nodes to highlight — hovering one reveals the structure |
+| `nodes` | `JSONB` | Array of `ObservationNode` objects (`types/index.ts`): `{ghost_id, level, node_type, content}`. Written once at creation — never appended to, so no RPC needed. |
+| `created_at` | `TIMESTAMPTZ` | Creation timestamp |
+
+**RLS:** Access via canvas ownership.
+
+---
+
+## 12. observer_edges
+
+One row per accept/reject-able edge within an Observer structure — either an
+anchor→observation edge or an observation→observation edge between levels.
+Feedback is per-edge (the user flags an edge + a reason), but a rejection is a
+re-think trigger, not a local delete: rejections batch (the user may flag
+several improper edges before the structure vanishes), then the pending
+structure is torn down and the Observer is re-invoked with all of them. See
+CORE-CONCEPTS.md → The Observer Structure (steps 5-6).
+
+| Column | Type | Use |
+|---|---|---|
+| `id` | `UUID PK` | Edge identifier — referenced by `rejection_insights.target_edge_id` |
+| `structure_id` | `UUID FK → observer_structures` | Which structure this edge belongs to |
+| `from_id` | `UUID NOT NULL` | An anchor node id (real canvas node), or another observation node's `ghost_id` from the parent structure's `nodes` array |
+| `to_id` | `UUID NOT NULL` | An observation node's `ghost_id` |
+| `status` | `TEXT NOT NULL` | `pending`, `accepted`, or `rejected`. The node at `to_id` crosses into the canvas only once ALL its incoming edges are `accepted` (it is a synthesis of all of them). Any `rejected` edge batches into a re-think: the pending structure is torn down and the Observer re-invoked with every rejected edge. |
+| `created_at` | `TIMESTAMPTZ` | Creation timestamp |
+
+**RLS:** Access via `observer_structures` → canvas ownership.
+
+---
+
 ## Postgres Functions (Migrations)
 
 | Function | Migration | Purpose |
@@ -235,12 +288,15 @@ auth.users
         │     └── edges (canvas_id + session_id)
         ├── agent_threads         (canvas_id)
         ├── attunement_state      (canvas_id + session_id)
-        ├── rejection_insights    (canvas_id + session_id + thread_id)
+        ├── rejection_insights    (canvas_id + session_id + thread_id + target_edge_id)
         ├── ai_contributions      (canvas_id + session_id)
-        └── session_learnings     (canvas_id + session_id)
+        ├── session_learnings     (canvas_id + session_id)
+        └── observer_structures   (canvas_id + session_id + thread_id)
+              └── observer_edges  (structure_id)
 
 auth.users
   └── subscriptions     (user_id)
 ```
 
 All child tables cascade-delete on `canvases` delete (`ON DELETE CASCADE`).
+`rejection_insights.target_edge_id` cascade-deletes on `observer_edges` delete.
