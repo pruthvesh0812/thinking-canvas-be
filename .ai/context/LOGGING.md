@@ -62,8 +62,22 @@ logger.warn('[tool:tool_name] no result', { canvas_id, node_id })
 ### Agents (`src/agents/*.ts`)
 ```typescript
 logger.info('[agent:expander] invoked', { canvas_id, trigger_node_id })
-logger.info('[agent:expander] stream complete', { canvas_id, tokens: count })
-logger.error('[agent:expander] failed', { canvas_id, error: err.message })
+const started_at = Date.now()
+
+// Streaming agents (expander, stress-tester, articulator, outer-subconscious) —
+// pass onFinish to .stream() so completion logs once the stream is consumed,
+// whether by a test caller or the real pipeline:
+logger.info('[agent:expander] stream complete', {
+  canvas_id, trigger_node_id, tokens: usage.totalTokens,
+  tool_calls: toolCalls.map(t => t.payload.toolName).join(',') || null,
+  finish_reason: finishReason, duration_ms: Date.now() - started_at,
+})
+
+// Non-streaming agents (.generate() — orchestrator, attunement, observer) —
+// log "done" with key output fields + duration_ms.
+logger.info('[agent:orchestrator] done', { canvas_id, route, question_style, duration_ms })
+
+logger.error('[agent:expander] failed', { canvas_id, trigger_node_id, error: err.message, duration_ms: Date.now() - started_at })
 ```
 
 ### Inngest Pipelines (`src/pipeline/*.ts`)

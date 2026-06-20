@@ -65,6 +65,7 @@ export async function runAttunement(params: {
 }): Promise<AttunementOutput> {
   const { canvas_id, session_id, recent_nodes } = params
   logger.info('[agent:attunement] invoked', { canvas_id, session_id })
+  const started_at = Date.now()
 
   try {
     const { object } = await attunementAgent.generate(recent_nodes, {
@@ -77,11 +78,12 @@ export async function runAttunement(params: {
       cognitive_mode: object.cognitive_mode,
       question_style: object.question_style,
       phase_shift_suggested: object.phase_shift_suggested,
+      duration_ms: Date.now() - started_at,
     })
 
     return object
   } catch (err) {
-    logger.error('[agent:attunement] failed', { canvas_id, session_id, error: (err as Error).message })
+    logger.error('[agent:attunement] failed', { canvas_id, session_id, error: (err as Error).message, duration_ms: Date.now() - started_at })
     throw err
   }
 }
