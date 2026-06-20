@@ -1,20 +1,33 @@
 import type { AgentRole } from '../../types/index.js'
 
-export type SerializationRule = {
+type CommonRuleFields = {
   includeRejectionInsights: boolean
   includeNorthStar: boolean
   includeClickMoment: boolean
+}
+
+type TieredRuleFields = {
   activeNode: 'full+attunement' | 'full' | 'summary'
   tier2: 'full' | 'full+contradictions' | 'summary' | 'full+both-trails' | 'na'
   tier3: 'summary+marker' | 'summary+flag' | 'summary' | 'na'
   tier4: 'trail+markers' | 'extract_contradictions' | 'trail' | 'na'
   includeAttunement: boolean
   includeGhostHistory: 'own' | 'none' | 'summary'
-  // 'canvas-map' = bird's-eye agents (Observer). Bypasses recency tiers entirely —
-  // see serializeCanvasMap() in index.ts. activeNode/tier2/tier3/tier4/
-  // includeAttunement/includeGhostHistory are ignored for this thread type.
-  threadType: 'canvas-stateful' | 'stateless' | 'canvas-map'
 }
+
+// Recency-tiered agents (everything except the Observer) — see serializeStateless/
+// serializeTiered in index.ts, which take this narrowed type.
+export type TieredSerializationRule = CommonRuleFields & TieredRuleFields & {
+  threadType: 'canvas-stateful' | 'stateless'
+}
+
+// 'canvas-map' = bird's-eye agents (Observer). Bypasses recency tiers entirely —
+// see serializeCanvasMap() in index.ts — so it carries none of TieredRuleFields.
+export type CanvasMapRule = CommonRuleFields & {
+  threadType: 'canvas-map'
+}
+
+export type SerializationRule = TieredSerializationRule | CanvasMapRule
 
 // Transcribed directly from SERIALIZATION.md — Per-Agent Serialization Rules table.
 export const SERIALIZATION_RULES: Record<AgentRole, SerializationRule> = {
@@ -46,12 +59,6 @@ export const SERIALIZATION_RULES: Record<AgentRole, SerializationRule> = {
     includeRejectionInsights: true,
     includeNorthStar: true,
     includeClickMoment: true,
-    activeNode: 'summary',
-    tier2: 'summary',
-    tier3: 'summary',
-    tier4: 'trail',
-    includeAttunement: false,
-    includeGhostHistory: 'summary',
     threadType: 'canvas-map',
   },
   articulator: {

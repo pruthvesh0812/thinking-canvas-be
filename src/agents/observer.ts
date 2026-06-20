@@ -2,7 +2,7 @@ import { Agent } from '@mastra/core/agent'
 import { z } from 'zod'
 import { models } from '../lib/llm.js'
 import { logger } from '../lib/logger.js'
-import { getNode } from '../db/nodes.js'
+import { getNodesByIds } from '../db/nodes.js'
 import { get_big_picture } from '../tools/get-big-picture.js'
 import { get_content } from '../tools/get-content.js'
 import { traverse_trail } from '../tools/traverse-trail.js'
@@ -174,17 +174,20 @@ async function validateObservation(canvas_id: string, out: ObserverLLMOutput): P
 
   // Gap 5 — anchors must be real nodes on this canvas (service-role client bypasses RLS).
   const anchorSet = new Set(out.anchor_node_ids)
-  await Promise.all(
-    out.anchor_node_ids.map(async (id) => {
-      const node = await getNode(id).catch(() => null)
-      if (!node) throw new Error(`observer: anchor ${id} does not exist`)
-      if (node.canvas_id !== canvas_id) throw new Error(`observer: anchor ${id} is not on canvas ${canvas_id}`)
-    }),
-  )
+  const anchorNodes = await getNodesByIds([...anchorSet])
+  const anchorNodeById = new Map(anchorNodes.map(n => [n.id, n]))
+  for (const id of anchorSet) {
+    const node = anchorNodeById.get(id)
+    if (!node) throw new Error(`observer: anchor ${id} does not exist`)
+    if (node.canvas_id !== canvas_id) throw new Error(`observer: anchor ${id} is not on canvas ${canvas_id}`)
+  }
 
-  // Build label → level map and reject duplicate labels.
+  // Build label → level map and reject duplicate labels. A label colliding with
+  // an anchor id would make labelToId.get(e.from) resolve an anchor edge to the
+  // wrong node below, so anchor collisions are rejected here too.
   const labelToLevel = new Map<string, number>()
   for (const n of out.nodes) {
+    if (anchorSet.has(n.label)) throw new Error(`observer: node label "${n.label}" collides with an anchor node id`)
     if (labelToLevel.has(n.label)) throw new Error(`observer: duplicate node label "${n.label}"`)
     labelToLevel.set(n.label, n.level)
   }
@@ -246,7 +249,7 @@ export async function runObserver(params: {
       providerOptions: { google: models.thinking('high') },
     })
 
-    if (object.discard) {
+    if (rethink && object.discard) {
       logger.info('[agent:observer] discarded', { canvas_id, trigger_node_id })
       return null
     }

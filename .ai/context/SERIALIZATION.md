@@ -116,7 +116,7 @@ stale or miss a branch the thread didn't happen to record:
    recency pointer on top of the full map — "where attention is right now" —
    not a replacement for it.
 3. **PAST OBSERVATIONS** — the Observer's own prior structures
-   (`getStructuresByCanvas` / `getEdgesByStructure`), each node shown with its
+   (`getStructuresByCanvas` / `getEdgesByStructures`), each node shown with its
    per-edge accept/reject outcome so the Observer doesn't repeat a
    structure the user already worked through. Empty until pipeline write
    support for `observer_structures`/`observer_edges` lands (features 8–10).

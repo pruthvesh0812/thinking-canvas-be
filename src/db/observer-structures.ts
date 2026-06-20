@@ -18,15 +18,24 @@ export async function getStructuresByCanvas(canvas_id: string): Promise<Observer
   return (data ?? []) as ObserverStructure[]
 }
 
-// One structure's edges, each carrying its own accept/reject/pending status —
-// this is what pastObservationsBlock uses to compute each node's overall outcome.
-export async function getEdgesByStructure(structure_id: string): Promise<ObserverEdge[]> {
+// Every edge for the given structures in one round-trip, grouped by
+// structure_id — this is what pastObservationsBlock uses to compute each
+// node's overall outcome.
+export async function getEdgesByStructures(structure_ids: string[]): Promise<Map<string, ObserverEdge[]>> {
+  const byStructure = new Map<string, ObserverEdge[]>()
+  if (structure_ids.length === 0) return byStructure
+
   const { data, error } = await db
     .from('observer_edges')
     .select('*')
-    .eq('structure_id', structure_id)
+    .in('structure_id', structure_ids)
     .order('created_at', { ascending: true })
 
-  if (error) throw new Error(`getEdgesByStructure failed: ${error.message}`)
-  return (data ?? []) as ObserverEdge[]
+  if (error) throw new Error(`getEdgesByStructures failed: ${error.message}`)
+  for (const edge of (data ?? []) as ObserverEdge[]) {
+    const list = byStructure.get(edge.structure_id) ?? []
+    list.push(edge)
+    byStructure.set(edge.structure_id, list)
+  }
+  return byStructure
 }

@@ -1,4 +1,5 @@
 import { getActiveByCanvas } from '../db/rejection-insights.js'
+import { logger } from '../lib/logger.js'
 import type { AgentRole, RejectionInsight } from '../../types/index.js'
 
 const DIVIDER = '─────────────────────────────────────────────'
@@ -73,12 +74,20 @@ export async function buildRejectionBlock(canvas_id: string, agentRole: AgentRol
     ))
   }
 
-  if (agentRole === 'observer' && connectionInsights.length > 0) {
-    blocks.push(renderBlock(
-      'OBSERVER CONNECTION FEEDBACK (active — do not repeat these connections):',
-      connectionInsights,
-      i => CONNECTION_REASON_LABEL[i.connection_feedback ?? ''] ?? i.connection_feedback ?? '',
-    ))
+  if (connectionInsights.length > 0) {
+    if (agentRole === 'observer') {
+      blocks.push(renderBlock(
+        'OBSERVER CONNECTION FEEDBACK (active — do not repeat these connections):',
+        connectionInsights,
+        i => CONNECTION_REASON_LABEL[i.connection_feedback ?? ''] ?? i.connection_feedback ?? '',
+      ))
+    } else {
+      logger.warn('[serializer:rejection] dropping connection insights for non-observer role', {
+        canvas_id,
+        agentRole,
+        count: connectionInsights.length,
+      })
+    }
   }
 
   return blocks.join('\n\n')

@@ -87,6 +87,11 @@ export type Node = {
   created_at: string
 }
 
+// The Observer's canvas map only ever reads these fields off a node (never
+// .content — see CORE-CONCEPTS.md) — narrows getAllByCanvas's select() to
+// match, instead of over-fetching every column for every node on the canvas.
+export type CanvasMapNode = Pick<Node, 'id' | 'session_id' | 'summary' | 'direction_marker'>
+
 export type Edge = {
   id: string
   canvas_id: string

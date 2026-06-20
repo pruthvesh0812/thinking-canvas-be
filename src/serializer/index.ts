@@ -1,9 +1,9 @@
 import { classifyTiers, type Tier } from './tiers.js'
-import { SERIALIZATION_RULES, type SerializationRule } from './rules.js'
+import { SERIALIZATION_RULES, type TieredSerializationRule, type CanvasMapRule } from './rules.js'
 import { buildRejectionBlock } from './rejection.js'
 import { getNode, getAllByCanvas, getRecentNodes } from '../db/nodes.js'
 import { getEdgesByCanvas } from '../db/edges.js'
-import { getStructuresByCanvas, getEdgesByStructure } from '../db/observer-structures.js'
+import { getStructuresByCanvas, getEdgesByStructures } from '../db/observer-structures.js'
 import { logger } from '../lib/logger.js'
 import type {
   AgentThread,
@@ -11,6 +11,7 @@ import type {
   Canvas,
   ThreadMessage,
   Node,
+  CanvasMapNode,
   Edge,
   GhostStatus,
   ObserverStructure,
@@ -60,18 +61,19 @@ function ghostSymbol(status: GhostStatus): string {
   }
 }
 
-// Builds INCOMING + OUTGOING edge lines for a node using the pre-fetched canvas edge list.
-function edgeLines(
-  nodeId: string,
-  edges: Edge[],
-  nodeMap: Map<string, Node>,
-  seqMap: Map<string, number>,
+// Builds INCOMING + OUTGOING edge lines from a node's own pre-filtered edge
+// lists. nodeMap only needs to support .get() (ReadonlyMap) so callers can
+// pass either a Map<string, Node> or a Map<string, CanvasMapNode>.
+function formatEdgeLines(
+  incoming: Edge[],
+  outgoing: Edge[],
+  nodeMap: ReadonlyMap<string, Pick<Node, 'direction_marker' | 'summary'>>,
+  seqMap: ReadonlyMap<string, number>,
 ): string[] {
   const lines: string[] = []
 
   // Step 1 — Emit one INCOMING line per edge that points INTO this node.
-  const inc = edges.filter(e => e.to_node_id === nodeId)
-  for (const e of inc) {
+  for (const e of incoming) {
     const src = nodeMap.get(e.from_node_id)
     const srcSeq = seqMap.get(e.from_node_id) ?? '?'
     const marker = src?.direction_marker ?? '?'
@@ -80,17 +82,53 @@ function edgeLines(
   }
 
   // Step 2 — Emit one OUTGOING line per edge that leaves this node.
-  const out = edges.filter(e => e.from_node_id === nodeId)
-  if (out.length === 0) {
+  if (outgoing.length === 0) {
     lines.push('OUTGOING: none yet')
   } else {
-    for (const e of out) {
+    for (const e of outgoing) {
       const dstSeq = seqMap.get(e.to_node_id) ?? '?'
       lines.push(`OUTGOING: ──${e.edge_type}──▶ seq:${dstSeq}`)
     }
   }
 
   return lines
+}
+
+// Builds INCOMING + OUTGOING edge lines for a node by filtering the full
+// canvas edge list — fine for the tier formatters below, since they're only
+// ever called once per thread message. canvasMapBlock pre-indexes instead
+// (see indexEdgesByNode) since it calls this once per node across the WHOLE
+// canvas, where re-filtering the full edge list per node is O(n²).
+function edgeLines(
+  nodeId: string,
+  edges: Edge[],
+  nodeMap: ReadonlyMap<string, Pick<Node, 'direction_marker' | 'summary'>>,
+  seqMap: ReadonlyMap<string, number>,
+): string[] {
+  return formatEdgeLines(
+    edges.filter(e => e.to_node_id === nodeId),
+    edges.filter(e => e.from_node_id === nodeId),
+    nodeMap,
+    seqMap,
+  )
+}
+
+// Groups edges by endpoint once, so a caller that needs every node's
+// incoming/outgoing lists (canvasMapBlock) can look each one up in O(1)
+// instead of re-filtering the whole edge list per node.
+function indexEdgesByNode(edges: Edge[]): { incoming: Map<string, Edge[]>; outgoing: Map<string, Edge[]> } {
+  const incoming = new Map<string, Edge[]>()
+  const outgoing = new Map<string, Edge[]>()
+  for (const e of edges) {
+    const incList = incoming.get(e.to_node_id)
+    if (incList) incList.push(e)
+    else incoming.set(e.to_node_id, [e])
+
+    const outList = outgoing.get(e.from_node_id)
+    if (outList) outList.push(e)
+    else outgoing.set(e.from_node_id, [e])
+  }
+  return { incoming, outgoing }
 }
 
 // ─── Tier formatters ──────────────────────────────────────────────────────────
@@ -105,7 +143,7 @@ function formatTier1(
   edges: Edge[],
   nodeMap: Map<string, Node>,
   seqMap: Map<string, number>,
-  rule: SerializationRule,
+  rule: TieredSerializationRule,
   pendingNodeCount: number,
 ): string {
   const nodeId = 'node_id' in msg && msg.node_id ? msg.node_id : 'unknown'
@@ -159,7 +197,7 @@ function formatTier2(
   edges: Edge[],
   nodeMap: Map<string, Node>,
   seqMap: Map<string, number>,
-  rule: SerializationRule,
+  rule: TieredSerializationRule,
 ): string {
   const nodeId = 'node_id' in msg && msg.node_id ? msg.node_id : 'unknown'
   const marker = node?.direction_marker ?? ''
@@ -208,7 +246,7 @@ function formatTier3(
   edges: Edge[],
   nodeMap: Map<string, Node>,
   seqMap: Map<string, number>,
-  rule: SerializationRule,
+  rule: TieredSerializationRule,
 ): string {
   const nodeId = 'node_id' in msg && msg.node_id ? msg.node_id : 'unknown'
   const marker = node?.direction_marker ?? ''
@@ -301,11 +339,13 @@ function formatTier4Group(items: Tier4Item[]): string {
 // connections. Source of truth is the nodes/edges tables directly — independent
 // of any thread's message log — so the Observer's view of the canvas can never
 // miss a branch a thread happened not to record.
-function canvasMapBlock(allNodes: Node[], edges: Edge[], seqMap: Map<string, number>): string {
-  // Step 1 — Index nodes by ID (for edgeLines' lookups) and group them by
-  // session, preserving each session's insertion order (allNodes is oldest-first).
+function canvasMapBlock(allNodes: CanvasMapNode[], edges: Edge[], seqMap: Map<string, number>): string {
+  // Step 1 — Index nodes by ID (for formatEdgeLines' lookups), pre-index edges
+  // by endpoint once for the whole canvas, and group nodes by session,
+  // preserving each session's insertion order (allNodes is oldest-first).
   const nodeMap = new Map(allNodes.map(n => [n.id, n]))
-  const bySession = new Map<string, Node[]>()
+  const { incoming, outgoing } = indexEdgesByNode(edges)
+  const bySession = new Map<string, CanvasMapNode[]>()
   for (const n of allNodes) {
     const list = bySession.get(n.session_id) ?? []
     list.push(n)
@@ -320,7 +360,7 @@ function canvasMapBlock(allNodes: Node[], edges: Edge[], seqMap: Map<string, num
     for (const n of nodes) {
       lines.push(`[seq:${seqMap.get(n.id)} | ${n.id} | ${n.direction_marker ?? '?'}]`)
       lines.push(`  "${n.summary ?? '(no summary yet)'}"`)
-      for (const line of edgeLines(n.id, edges, nodeMap, seqMap)) {
+      for (const line of formatEdgeLines(incoming.get(n.id) ?? [], outgoing.get(n.id) ?? [], nodeMap, seqMap)) {
         lines.push(`  ${line}`)
       }
     }
@@ -385,7 +425,7 @@ function pastObservationsBlock(structures: ObserverStructure[], edgesByStructure
 async function serializeCanvasMap(
   canvas: Canvas,
   agentRole: AgentRole,
-  rule: SerializationRule,
+  rule: CanvasMapRule,
   triggerNodeId: string | undefined,
 ): Promise<string> {
   // Step 1 — Fetch everything this context needs in parallel, straight from
@@ -398,12 +438,8 @@ async function serializeCanvasMap(
     rule.includeRejectionInsights ? buildRejectionBlock(canvas.id, agentRole) : Promise.resolve(''),
   ])
 
-  // Step 2 — One more round-trip per structure to pull its edges (can't be
-  // batched — getEdgesByStructure takes a single structure_id), fired together.
-  const edgesByStructure = new Map<string, ObserverEdge[]>()
-  await Promise.all(structures.map(async (s) => {
-    edgesByStructure.set(s.id, await getEdgesByStructure(s.id))
-  }))
+  // Step 2 — One batched round-trip for every structure's edges.
+  const edgesByStructure = await getEdgesByStructures(structures.map(s => s.id))
 
   // Step 3 — seq numbers are this canvas's full node order (1-based), so the
   // CANVAS MAP and CURRENT FOCUS blocks below can cross-reference the same seq.
@@ -423,12 +459,25 @@ async function serializeCanvasMap(
 
 // ─── Thread-type strategies (stateless / canvas-stateful tiering) ───────────
 
+// Looks up the seq number and Node row for a canvas_event message's node_id —
+// shared by serializeStateless and serializeTiered so both derive it the same way.
+function resolveMsgContext(
+  msg: UserCanvasMsg,
+  nodeMap: Map<string, Node>,
+  seqMap: Map<string, number>,
+): { seq: number; node: Node | undefined } {
+  const nodeId = 'node_id' in msg ? msg.node_id : undefined
+  const seq = nodeId ? (seqMap.get(nodeId) ?? 0) : 0
+  const node = nodeId ? nodeMap.get(nodeId) : undefined
+  return { seq, node }
+}
+
 // Stateless agents (Outer Sub) only ever see Tier 0 + the single active node —
 // no thread history, no tier 2–4. Returns '' if the thread has no canvas_event
 // message yet (nothing to show as "active").
 function serializeStateless(
   thread: AgentThread,
-  rule: SerializationRule,
+  rule: TieredSerializationRule,
   nodeMap: Map<string, Node>,
   seqMap: Map<string, number>,
   edges: Edge[],
@@ -437,9 +486,7 @@ function serializeStateless(
     const msg = thread.messages[i]
     if (msg.role !== 'user' || msg.turn_type !== 'canvas_event') continue
 
-    const nodeId = 'node_id' in msg ? msg.node_id : undefined
-    const seq = nodeId ? (seqMap.get(nodeId) ?? 0) : 0
-    const node = nodeId ? nodeMap.get(nodeId) : undefined
+    const { seq, node } = resolveMsgContext(msg as UserCanvasMsg, nodeMap, seqMap)
     const assistantMsg = asGhostPairMsg(thread.messages[i + 1])
 
     return formatTier1(msg as UserCanvasMsg, assistantMsg, seq, node, edges, nodeMap, seqMap, rule, 0)
@@ -454,7 +501,7 @@ function serializeStateless(
 // blocks in recency-first order (Tier 1 → Tier 4) for the caller to append.
 function serializeTiered(
   thread: AgentThread,
-  rule: SerializationRule,
+  rule: TieredSerializationRule,
   nodeMap: Map<string, Node>,
   seqMap: Map<string, number>,
   edges: Edge[],
@@ -479,9 +526,7 @@ function serializeTiered(
     // Pair the user message with its immediately following assistant response (if any).
     const assistantMsg = asGhostPairMsg(thread.messages[i + 1])
 
-    const nodeId = 'node_id' in msg ? msg.node_id : undefined
-    const seq = nodeId ? (seqMap.get(nodeId) ?? 0) : 0
-    const node = nodeId ? nodeMap.get(nodeId) : undefined
+    const { seq, node } = resolveMsgContext(msg as UserCanvasMsg, nodeMap, seqMap)
 
     switch (tier) {
       case 1: {

@@ -1,5 +1,5 @@
 import { db } from './client.js'
-import type { Node, DirectionMarker } from '../../types/index.js'
+import type { Node, DirectionMarker, CanvasMapNode } from '../../types/index.js'
 
 // Backend READS nodes only — frontend writes user nodes directly to Supabase.
 
@@ -12,6 +12,18 @@ export async function getNode(id: string): Promise<Node> {
 
   if (error) throw new Error(`getNode failed: ${error.message}`)
   return data as Node
+}
+
+// Batched lookup — use instead of N parallel getNode() calls when validating a
+// set of ids (e.g. the Observer's anchor_node_ids).
+export async function getNodesByIds(ids: string[]): Promise<Node[]> {
+  const { data, error } = await db
+    .from('nodes')
+    .select('*')
+    .in('id', ids)
+
+  if (error) throw new Error(`getNodesByIds failed: ${error.message}`)
+  return (data ?? []) as Node[]
 }
 
 export async function getRecentNodes(
@@ -30,18 +42,18 @@ export async function getRecentNodes(
 }
 
 // Every node on the canvas, oldest first — the Observer's bird's-eye map source.
-// Returns full Node rows for consistency with the rest of this module, but callers
-// must only read .summary/.direction_marker/.session_id — never .content (the
-// Observer's "summary only, never full content" rule — see CORE-CONCEPTS.md).
-export async function getAllByCanvas(canvas_id: string): Promise<Node[]> {
+// Selects only the fields the canvas map ever reads (the Observer's "summary
+// only, never full content" rule — see CORE-CONCEPTS.md), instead of fetching
+// every column for every node on a canvas that only grows over time.
+export async function getAllByCanvas(canvas_id: string): Promise<CanvasMapNode[]> {
   const { data, error } = await db
     .from('nodes')
-    .select('*')
+    .select('id, session_id, summary, direction_marker')
     .eq('canvas_id', canvas_id)
     .order('created_at', { ascending: true })
 
   if (error) throw new Error(`getAllByCanvas failed: ${error.message}`)
-  return (data ?? []) as Node[]
+  return (data ?? []) as CanvasMapNode[]
 }
 
 export async function getNodesBySession(
