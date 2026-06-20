@@ -58,11 +58,23 @@ export async function streamExpander(params: {
 }) {
   const { canvas_id, trigger_node_id, serialized_context } = params
   logger.info('[agent:expander] invoked', { canvas_id, trigger_node_id })
+  const started_at = Date.now()
 
   try {
-    return await expanderAgent.stream(serialized_context)
+    return await expanderAgent.stream(serialized_context, {
+      onFinish: ({ usage, toolCalls, finishReason }) => {
+        logger.info('[agent:expander] stream complete', {
+          canvas_id,
+          trigger_node_id,
+          tokens: usage.totalTokens,
+          tool_calls: toolCalls.map(t => t.payload.toolName).join(',') || null,
+          finish_reason: finishReason,
+          duration_ms: Date.now() - started_at,
+        })
+      },
+    })
   } catch (err) {
-    logger.error('[agent:expander] failed', { canvas_id, trigger_node_id, error: (err as Error).message })
+    logger.error('[agent:expander] failed', { canvas_id, trigger_node_id, error: (err as Error).message, duration_ms: Date.now() - started_at })
     throw err
   }
 }

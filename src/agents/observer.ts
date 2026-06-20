@@ -238,6 +238,7 @@ export async function runObserver(params: {
 }): Promise<ObserverObservation | null> {
   const { canvas_id, trigger_node_id, serialized_context, rethink } = params
   logger.info('[agent:observer] invoked', { canvas_id, trigger_node_id, rethink: Boolean(rethink) })
+  const started_at = Date.now()
 
   const prompt = rethink
     ? `${serialized_context}\n\n${rethinkBlock(rethink)}`
@@ -250,7 +251,7 @@ export async function runObserver(params: {
     })
 
     if (rethink && object.discard) {
-      logger.info('[agent:observer] discarded', { canvas_id, trigger_node_id })
+      logger.info('[agent:observer] discarded', { canvas_id, trigger_node_id, duration_ms: Date.now() - started_at })
       return null
     }
 
@@ -275,11 +276,12 @@ export async function runObserver(params: {
       trigger_node_id,
       node_count: nodes.length,
       edge_count: edges.length,
+      duration_ms: Date.now() - started_at,
     })
 
     return { anchor_node_ids: object.anchor_node_ids, nodes, edges }
   } catch (err) {
-    logger.error('[agent:observer] failed', { canvas_id, trigger_node_id, error: (err as Error).message })
+    logger.error('[agent:observer] failed', { canvas_id, trigger_node_id, error: (err as Error).message, duration_ms: Date.now() - started_at })
     throw err
   }
 }

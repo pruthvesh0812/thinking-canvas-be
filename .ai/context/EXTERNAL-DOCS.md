@@ -1,5 +1,5 @@
 ---
-last-verified: 2026-06-08
+last-verified: 2026-06-20
 stale-after-days: 30
 ---
 
@@ -73,7 +73,10 @@ Most libraries have llms.txt files optimized for AI consumption. Fetch these bef
 
 ### Langfuse
 - **Docs:** https://langfuse.com/docs
-- **Integration:** Via Mastra OpenTelemetry — `apps/api/mastra.config.ts`
+- **llms.txt:** https://langfuse.com/llms.txt (sub-files: `llms-docs.txt`, `llms-integrations.txt`, `llms-self-hosting.txt`)
+- **Integration:** `@mastra/observability` + `@mastra/langfuse` (`LangfuseExporter`), wired in `src/mastra.ts` — Mastra's auto-instrumentation traces every agent registered there
+- **Self-hosted:** point `LANGFUSE_BASE_URL` at the self-hosted instance; `LangfuseExporter()` reads `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_BASE_URL` from env with no args needed
+- **Self-host stack is NOT in this repo** — Postgres+ClickHouse+Redis+MinIO+web+worker is a separate service deployed independently
 
 ---
 

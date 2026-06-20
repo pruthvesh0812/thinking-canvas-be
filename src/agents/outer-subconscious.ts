@@ -49,13 +49,24 @@ export async function streamOuterSubconscious(params: {
 }) {
   const { canvas_id, trigger_node_id, serialized_context } = params
   logger.info('[agent:outer-subconscious] invoked', { canvas_id, trigger_node_id })
+  const started_at = Date.now()
 
   try {
     return await outerSubconsciousAgent.stream(serialized_context, {
       providerOptions: { google: models.thinking('high') },
+      onFinish: ({ usage, toolCalls, finishReason }) => {
+        logger.info('[agent:outer-subconscious] stream complete', {
+          canvas_id,
+          trigger_node_id,
+          tokens: usage.totalTokens,
+          tool_calls: toolCalls.map(t => t.payload.toolName).join(',') || null,
+          finish_reason: finishReason,
+          duration_ms: Date.now() - started_at,
+        })
+      },
     })
   } catch (err) {
-    logger.error('[agent:outer-subconscious] failed', { canvas_id, trigger_node_id, error: (err as Error).message })
+    logger.error('[agent:outer-subconscious] failed', { canvas_id, trigger_node_id, error: (err as Error).message, duration_ms: Date.now() - started_at })
     throw err
   }
 }

@@ -72,6 +72,7 @@ export const orchestratorAgent = new Agent({
 export async function routeWithOrchestrator(input: OrchestratorInput): Promise<OrchestratorOutput> {
   const { canvas_id, available_agents } = input
   logger.info('[agent:orchestrator] invoked', { canvas_id, available_agents, phase: input.signals.phase })
+  const started_at = Date.now()
 
   const prompt = JSON.stringify({
     attunement: input.attunement,
@@ -95,10 +96,15 @@ export async function routeWithOrchestrator(input: OrchestratorInput): Promise<O
       return { ...object, route: fallback }
     }
 
-    logger.info('[agent:orchestrator] done', { canvas_id, route: object.route, question_style: object.question_style })
+    logger.info('[agent:orchestrator] done', {
+      canvas_id,
+      route: object.route,
+      question_style: object.question_style,
+      duration_ms: Date.now() - started_at,
+    })
     return object
   } catch (err) {
-    logger.error('[agent:orchestrator] failed', { canvas_id, error: (err as Error).message })
+    logger.error('[agent:orchestrator] failed', { canvas_id, error: (err as Error).message, duration_ms: Date.now() - started_at })
     throw err
   }
 }

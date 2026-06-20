@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-08
-verified-against: ThinkingCanvas_TechnicalBuild.docx (post single-user refactor)
+last-verified: 2026-06-20
+verified-against: Langfuse observability wired via @mastra/observability + @mastra/langfuse (src/mastra.ts)
 stale-after-days: 30
 ---
 
@@ -105,6 +105,19 @@ User
 
 ---
 
+## Observability
+
+All 7 agents are registered in one `Mastra` instance (`src/mastra.ts`) instead
+of being called as bare `Agent` instances — Mastra's auto-instrumentation only
+traces agents that go through its registry. Traces export to Langfuse via
+`@mastra/langfuse`'s `LangfuseExporter`, which reads `LANGFUSE_PUBLIC_KEY` /
+`LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` from env — pointing `LANGFUSE_BASE_URL`
+at a self-hosted instance requires no code change. The self-hosted Langfuse
+stack itself (Postgres+ClickHouse+Redis+MinIO+web+worker) is a separate
+service, not deployed from this repo.
+
+---
+
 ## Key Environment Variables
 
 | Variable | Notes |
@@ -120,6 +133,7 @@ User
 | `INNGEST_SIGNING_KEY` | |
 | `LANGFUSE_PUBLIC_KEY` | Observability |
 | `LANGFUSE_SECRET_KEY` | |
+| `LANGFUSE_BASE_URL` | Self-hosted Langfuse instance URL — omit only if pointing at Langfuse Cloud |
 | `FRONTEND_URL` | Allowed CORS origin (Vercel URL) |
 
 ---

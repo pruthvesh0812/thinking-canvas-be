@@ -3,6 +3,7 @@ import { cors } from 'hono/cors'
 import { serve } from '@hono/node-server'
 import { serve as inngestServe } from 'inngest/hono'
 import { inngest } from './lib/inngest.js'
+import './mastra.js' // registers agents with Mastra so Langfuse tracing picks up their calls
 
 const app = new Hono()
 
