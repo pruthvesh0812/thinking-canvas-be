@@ -120,6 +120,7 @@ User
 | `INNGEST_SIGNING_KEY` | |
 | `LANGFUSE_PUBLIC_KEY` | Observability |
 | `LANGFUSE_SECRET_KEY` | |
+| `LANGFUSE_BASE_URL` | Self-hosted Langfuse instance URL — omit only if pointing at Langfuse Cloud |
 | `FRONTEND_URL` | Allowed CORS origin (Vercel URL) |
 
 ---

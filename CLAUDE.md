@@ -99,6 +99,7 @@ thinking-canvas-api/
 │   │   ├── redis.ts        # Upstash Redis client
 │   │   ├── tier.ts         # getAvailableAgents()
 │   │   └── guards.ts       # canAgentFire()
+│   ├── mastra.ts            # Mastra registry — agents + Langfuse observability config
 │   └── index.ts            # Hono app entry point
 ├── types/                  # TypeScript types shared across src/
 │   └── index.ts            # Canvas, Session, NodeDelta, GhostPair, RejectionInsight, SpawnDescriptor
@@ -133,6 +134,7 @@ thinking-canvas-api/
 | Redis client | `src/lib/redis.ts` |
 | canAgentFire guard | `src/lib/guards.ts` |
 | Change AI model / provider | `src/lib/llm.ts` |
+| Agent tracing / Langfuse observability | `src/mastra.ts` |
 
 ---
 
