@@ -149,6 +149,9 @@ thinking-canvas-api/
 | Inngest events | `domain/noun.verb` | `canvas/node.created`, `canvas/ghost.rejected` |
 | Redis channels | `canvas:stream:${sessionId}` | |
 | Spawn message types | string literal | `spawn` \| `chunk` \| `done` |
+| Git branches | `<type>/<short-title>-<timestamp>` | `feature/rejection-insights-injection-202606201430` |
+
+> Branch naming — full spec (allowed types, timestamp format) in `CODING-STANDARDS.md`. Never use randomly generated branch names.
 
 ---
 

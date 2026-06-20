@@ -27,6 +27,28 @@ stale-after-days: 90
 
 ---
 
+## Git Branch Naming
+
+```
+<type>/<short-title>-<timestamp>
+```
+
+- **type** — one of `feature`, `fix`, `chore`, `refactor`, `docs`, `test` — matches the change's nature
+- **short-title** — kebab-case, 2-5 words, describes the change itself (not a ticket number)
+- **timestamp** — UTC, `YYYYMMDDHHmm`
+
+```bash
+# ✅
+feature/rejection-insights-injection-202606201430
+fix/spawn-descriptor-null-id-202606201501
+chore/bump-mastra-core-202606210900
+
+# ❌ Never random/auto-generated names
+claude/admiring-albattani-nfsixe
+```
+
+---
+
 ## Package Manager
 
 **npm only.** No pnpm, no yarn, no bun.
