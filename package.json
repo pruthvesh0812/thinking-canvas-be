@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/src/index.js",
     "test": "vitest",
-    "migrate": "supabase db push",
+    "migrate": "supabase db push --local",
     "gen:types": "supabase gen types typescript --local > src/db/database.types.ts",
     "inngest:dev": "npx inngest-cli@latest dev",
     "seed:prompts": "tsx --env-file=.env scripts/seed-prompts.ts"

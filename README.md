@@ -11,7 +11,7 @@ Inngest; agent traces and prompts are managed in Langfuse.
 ## Prerequisites
 
 - Node.js 20+ and npm (this repo uses **npm only** — no pnpm/yarn/bun)
-- A [Supabase](https://supabase.com) project
+- Docker (the Supabase CLI runs Postgres + the API stack locally in containers)
 - An [Upstash Redis](https://upstash.com) database (REST API mode)
 - A Google AI (Gemini) API key
 - A [Langfuse](https://langfuse.com) project (cloud or self-hosted) for agent tracing + prompt management
@@ -39,8 +39,8 @@ Then fill in each value:
 | Variable | Where to get it |
 |---|---|
 | `GOOGLE_AI_API_KEY` | Google AI Studio → API keys |
-| `SUPABASE_URL` | Supabase dashboard → Project Settings → API → **Project URL** (`https://<project-ref>.supabase.co`). This is **not** the Postgres connection string (`postgres://...`) shown under Database settings — that's a different value used by direct DB clients, not by the `supabase-js` client this app uses. |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase dashboard → Project Settings → API → **service_role** secret |
+| `SUPABASE_URL` | Output of `supabase status` (step 3) → **API URL** (`http://127.0.0.1:54321` by default for local dev). This is **not** the Postgres connection string (`postgres://...`) — that's a different value used by direct DB clients, not by the `supabase-js` client this app uses. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Output of `supabase status` (step 3) → **service_role key** |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Upstash console → your database → REST API section |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe dashboard → Developers → API keys / Webhooks. Can be left blank for local dev. |
 | `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` | Inngest dashboard. Can be left blank for local dev — the Inngest client falls back to dev mode against the local dev server (step 5). |
@@ -48,13 +48,29 @@ Then fill in each value:
 | `LANGFUSE_BASE_URL` | Only set when self-hosting Langfuse; omit to use Langfuse Cloud |
 | `FRONTEND_URL` | URL of the running `thinking-canvas-web` frontend (CORS origin). Defaults to `*` if unset. |
 
-## 3. Link Supabase and run migrations
+## 3. Start local Supabase and run migrations
+
+This project runs against a **local** Supabase stack (Docker), not a linked
+cloud project. `npm run migrate` and `npm run gen:types` both target it via
+`--local`.
 
 ```bash
-npx supabase login                            # one-time, opens a browser
-npx supabase link --project-ref <your-ref>    # one-time per machine — links supabase/ to your project
-npm run migrate                               # applies supabase/migrations/*.sql to the linked project
+npx supabase start    # boots local Postgres + API stack in Docker, applies
+                       # supabase/migrations/*.sql on first run
+npx supabase status    # prints the local API URL + service_role key —
+                       # copy these into SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY
 ```
+
+After the first `supabase start`, push any new migrations with:
+
+```bash
+npm run migrate         # supabase db push --local
+npm run gen:types       # regenerates src/db/database.types.ts from the local schema
+```
+
+> Using a linked remote Supabase project instead (e.g. for staging) requires
+> `supabase login` + `supabase link --project-ref <ref>`, and swapping
+> `--local` for `--linked` in the `migrate`/`gen:types` scripts.
 
 ## 4. Seed Langfuse prompts (first run only)
 
@@ -93,7 +109,7 @@ curl http://localhost:3001/health
 | `npm run build` | Compiles TypeScript to `dist/` |
 | `npm run start` | Runs the compiled server (`dist/src/index.js`) |
 | `npm run test` | Runs the Vitest suite |
-| `npm run migrate` | Pushes pending migrations in `supabase/migrations/` to the linked project |
+| `npm run migrate` | Pushes pending migrations in `supabase/migrations/` to the local Supabase stack |
 | `npm run gen:types` | Regenerates `src/db/database.types.ts` from the Supabase schema |
 | `npm run inngest:dev` | Starts the local Inngest dev server |
 | `npm run seed:prompts` | Seeds/updates the 7 agent system prompts in Langfuse Prompt Management |
