@@ -2,9 +2,10 @@ import { Agent } from '@mastra/core/agent'
 import { z } from 'zod'
 import { models } from '../lib/llm.js'
 import { logger } from '../lib/logger.js'
+import { getPrompt } from '../lib/prompts.js'
 
 // System prompt is a constant — never interpolated from user data.
-const ATTUNEMENT_SYSTEM_PROMPT = `
+export const ATTUNEMENT_SYSTEM_PROMPT = `
 You are the Attunement Layer for ThinkingCanvas — a silent classifier that
 runs before every agent pipeline call. You read the QUALITY of thinking from
 the user's recent nodes, not just their content.
@@ -53,7 +54,7 @@ export const attunementAgent = new Agent({
   id: 'attunement',
   name: 'Attunement',
   model: models.fast(),
-  instructions: ATTUNEMENT_SYSTEM_PROMPT,
+  instructions: async () => getPrompt('attunement-system-prompt', ATTUNEMENT_SYSTEM_PROMPT),
 })
 
 // recent_nodes: pre-formatted text of the last 3-5 nodes from this session,

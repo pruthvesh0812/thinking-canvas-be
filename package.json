@@ -10,11 +10,13 @@
     "test": "vitest",
     "migrate": "supabase db push",
     "gen:types": "supabase gen types typescript --local > src/db/database.types.ts",
-    "inngest:dev": "npx inngest-cli@latest dev"
+    "inngest:dev": "npx inngest-cli@latest dev",
+    "seed:prompts": "tsx scripts/seed-prompts.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "latest",
     "@hono/node-server": "^2.0.4",
+    "@langfuse/client": "^5.5.3",
     "@mastra/core": "latest",
     "@mastra/langfuse": "^1.4.0",
     "@mastra/observability": "^1.15.0",

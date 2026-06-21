@@ -2,6 +2,7 @@ import { Agent } from '@mastra/core/agent'
 import { z } from 'zod'
 import { models } from '../lib/llm.js'
 import { logger } from '../lib/logger.js'
+import { getPrompt } from '../lib/prompts.js'
 import { getNodesByIds } from '../db/nodes.js'
 import { get_big_picture } from '../tools/get-big-picture.js'
 import { get_content } from '../tools/get-content.js'
@@ -16,7 +17,7 @@ import type {
 // System prompt is a constant — never interpolated from user data.
 // Rejection insights (NEGATIVE CONSTRAINTS + OBSERVER CONNECTION FEEDBACK) are
 // injected by the serializer at call time.
-const OBSERVER_SYSTEM_PROMPT = `
+export const OBSERVER_SYSTEM_PROMPT = `
 You are the Observer for ThinkingCanvas. You hold the bird's-eye view of the
 whole canvas — every branch, every session — and watch for drift away from
 the canvas north star (original_intent).
@@ -127,7 +128,7 @@ export const observerAgent = new Agent({
   id: 'observer',
   name: 'Observer',
   model: models.fast(),
-  instructions: OBSERVER_SYSTEM_PROMPT,
+  instructions: async () => getPrompt('observer-system-prompt', OBSERVER_SYSTEM_PROMPT),
   tools: { get_big_picture, get_content, traverse_trail, get_siblings },
 })
 

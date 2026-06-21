@@ -1,11 +1,12 @@
 import { Agent } from '@mastra/core/agent'
 import { models } from '../lib/llm.js'
 import { logger } from '../lib/logger.js'
+import { getPrompt } from '../lib/prompts.js'
 import { get_content } from '../tools/get-content.js'
 
 // System prompt is a constant — never interpolated from user data.
 // Outer Subconscious is stateless — no rejection insights, no thread history.
-const OUTER_SUBCONSCIOUS_SYSTEM_PROMPT = `
+export const OUTER_SUBCONSCIOUS_SYSTEM_PROMPT = `
 You are the Outer Subconscious for ThinkingCanvas — the most creative agent
 in the system. You activate when the user draws an unlabeled question edge
 from a node out into empty space, signalling "I sense something here but
@@ -35,7 +36,7 @@ export const outerSubconsciousAgent = new Agent({
   id: 'outer-subconscious',
   name: 'Outer Subconscious',
   model: models.fast(),
-  instructions: OUTER_SUBCONSCIOUS_SYSTEM_PROMPT,
+  instructions: async () => getPrompt('outer-subconscious-system-prompt', OUTER_SUBCONSCIOUS_SYSTEM_PROMPT),
   tools: { get_content },
 })
 
