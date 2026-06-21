@@ -181,9 +181,11 @@ thinking-canvas-api/
 npm run dev          # Start dev server (Hono + Inngest)
 npm run build        # Compile TypeScript
 npm run test         # Run tests
-npm run migrate      # Run pending Supabase migrations
-npm run gen:types    # Regenerate TypeScript types from Supabase schema
-npm run inngest:dev  # Start Inngest dev server separately
+npm run migrate:local      # Run pending Supabase migrations against local Docker stack
+npm run migrate:prod       # Run pending Supabase migrations against linked remote project
+npm run gen:types:local    # Regenerate TypeScript types from local Supabase schema
+npm run gen:types:prod     # Regenerate TypeScript types from linked remote project's schema
+npm run inngest:dev        # Start Inngest dev server separately
 ```
 
 ---

@@ -50,9 +50,7 @@ Then fill in each value:
 
 ## 3. Start local Supabase and run migrations
 
-This project runs against a **local** Supabase stack (Docker), not a linked
-cloud project. `npm run migrate` and `npm run gen:types` both target it via
-`--local`.
+Local development runs against a Supabase stack in Docker.
 
 ```bash
 npx supabase start    # boots local Postgres + API stack in Docker, applies
@@ -64,13 +62,20 @@ npx supabase status    # prints the local API URL + service_role key —
 After the first `supabase start`, push any new migrations with:
 
 ```bash
-npm run migrate         # supabase db push --local
-npm run gen:types       # regenerates src/db/database.types.ts from the local schema
+npm run migrate:local      # supabase db push --local
+npm run gen:types:local    # regenerates src/db/database.types.ts from the local schema
 ```
 
-> Using a linked remote Supabase project instead (e.g. for staging) requires
-> `supabase login` + `supabase link --project-ref <ref>`, and swapping
-> `--local` for `--linked` in the `migrate`/`gen:types` scripts.
+For a linked remote project (staging/production), link it once and use the
+`:prod` scripts instead:
+
+```bash
+npx supabase login
+npx supabase link --project-ref <ref>   # one-time per machine
+
+npm run migrate:prod       # supabase db push --linked
+npm run gen:types:prod     # regenerates src/db/database.types.ts from the linked project's schema
+```
 
 ## 4. Seed Langfuse prompts (first run only)
 
@@ -109,8 +114,10 @@ curl http://localhost:3001/health
 | `npm run build` | Compiles TypeScript to `dist/` |
 | `npm run start` | Runs the compiled server (`dist/src/index.js`) |
 | `npm run test` | Runs the Vitest suite |
-| `npm run migrate` | Pushes pending migrations in `supabase/migrations/` to the local Supabase stack |
-| `npm run gen:types` | Regenerates `src/db/database.types.ts` from the Supabase schema |
+| `npm run migrate:local` | Pushes pending migrations in `supabase/migrations/` to the local Supabase stack |
+| `npm run migrate:prod` | Pushes pending migrations to the linked remote project |
+| `npm run gen:types:local` | Regenerates `src/db/database.types.ts` from the local Supabase schema |
+| `npm run gen:types:prod` | Regenerates `src/db/database.types.ts` from the linked remote project's schema |
 | `npm run inngest:dev` | Starts the local Inngest dev server |
 | `npm run seed:prompts` | Seeds/updates the 7 agent system prompts in Langfuse Prompt Management |
 
