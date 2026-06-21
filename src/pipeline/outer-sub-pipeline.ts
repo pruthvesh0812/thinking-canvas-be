@@ -2,8 +2,7 @@ import { inngest } from '../lib/inngest.js'
 import { logger } from '../lib/logger.js'
 import { canAgentFire } from '../lib/guards.js'
 import { buildSpawnDescriptor, publishSpawn } from '../streaming/spawn.js'
-import { streamAgentOutput } from '../streaming/tokens.js'
-import { redis } from '../lib/redis.js'
+import { streamAgentOutput, publishDone } from '../streaming/tokens.js'
 import { streamOuterSubconscious } from '../agents/outer-subconscious.js'
 import { serialize } from '../serializer/index.js'
 import { getCanvas } from '../db/canvases.js'
@@ -72,7 +71,7 @@ export const outerSubPipeline = inngest.createFunction(
 
     // ── Step 6: Publish DONE + append thread turn ──────────────────────────
     await step.run('finalize', async () => {
-      await redis.publish(`canvas:stream:${session_id}`, JSON.stringify({ type: 'done' }))
+      await publishDone(session_id)
 
       const thread = await getOrCreateThread(canvas_id, 'outer_subconscious')
       const ghost_pair: GhostPair = {
@@ -84,7 +83,7 @@ export const outerSubPipeline = inngest.createFunction(
       await appendMessage(thread.id, {
         role: 'assistant',
         turn_type: 'ghost_pair',
-        content: typeof responseText === 'string' ? responseText : '',
+        content: responseText,
         ghost_pair,
         timestamp: new Date().toISOString(),
       })

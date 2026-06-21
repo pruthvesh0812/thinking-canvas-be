@@ -3,8 +3,7 @@ import { logger } from '../lib/logger.js'
 import { canAgentFire } from '../lib/guards.js'
 import { getAvailableAgents } from '../lib/tier.js'
 import { buildSpawnDescriptor, publishSpawn } from '../streaming/spawn.js'
-import { streamAgentOutput } from '../streaming/tokens.js'
-import { redis } from '../lib/redis.js'
+import { streamAgentOutput, publishDone } from '../streaming/tokens.js'
 import { runAttunement } from '../agents/attunement.js'
 import { routeWithOrchestrator } from '../agents/orchestrator.js'
 import { streamExpander } from '../agents/expander.js'
@@ -148,7 +147,7 @@ export const agentPipeline = inngest.createFunction(
 
     // ── Step 8: Publish DONE + append thread turn + decrement deferrals ─────
     await step.run('finalize', async () => {
-      await redis.publish(`canvas:stream:${session_id}`, JSON.stringify({ type: 'done' }))
+      await publishDone(session_id)
 
       const thread = await getOrCreateThread(canvas_id, agentRole)
       const ghost_pair: GhostPair = {
@@ -160,7 +159,7 @@ export const agentPipeline = inngest.createFunction(
       await appendMessage(thread.id, {
         role: 'assistant',
         turn_type: 'ghost_pair',
-        content: typeof responseText === 'string' ? responseText : '',
+        content: responseText,
         ghost_pair,
         timestamp: new Date().toISOString(),
       })
