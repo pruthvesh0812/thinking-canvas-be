@@ -22,8 +22,12 @@ Timestamp format: `YYYYMMDDHHMMSS` (e.g. `20260609120000_create_canvases.sql`)
 ## Running migrations
 
 ```bash
-npm run migrate        # applies pending migrations via supabase CLI
-npm run gen:types      # regenerates TypeScript types from schema after migration
+npm run migrate:local      # applies pending migrations to local Supabase (Docker)
+npm run gen:types:local    # regenerates TypeScript types from local schema after migration
+
+# Linked remote project (staging/production):
+npm run migrate:prod
+npm run gen:types:prod
 ```
 
 ---
@@ -102,7 +106,7 @@ CREATE INDEX IF NOT EXISTS idx_nodes_embedding
 ## After running a migration
 
 ```bash
-npm run gen:types     # regenerates src/db/database.types.ts from Supabase schema
+npm run gen:types:local     # regenerates src/db/database.types.ts from local Supabase schema
 ```
 
 Update any affected `src/db/*.ts` files to use the new generated types.

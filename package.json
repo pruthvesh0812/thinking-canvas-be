@@ -4,14 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --env-file=.env src/index.ts",
     "build": "tsc",
     "start": "node dist/src/index.js",
     "test": "vitest",
-    "migrate": "supabase db push",
-    "gen:types": "supabase gen types typescript --local > src/db/database.types.ts",
+    "migrate:local": "supabase db push --local",
+    "migrate:prod": "supabase db push --linked",
+    "gen:types:local": "supabase gen types typescript --local > src/db/database.types.ts",
+    "gen:types:prod": "supabase gen types typescript --linked > src/db/database.types.ts",
     "inngest:dev": "npx inngest-cli@latest dev",
-    "seed:prompts": "tsx scripts/seed-prompts.ts"
+    "seed:prompts": "tsx --env-file=.env scripts/seed-prompts.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "latest",
@@ -23,6 +25,7 @@
     "@supabase/supabase-js": "latest",
     "@upstash/redis": "latest",
     "ai": "^6.0.201",
+    "dotenv": "^17.4.2",
     "hono": "latest",
     "inngest": "latest",
     "stripe": "latest",
