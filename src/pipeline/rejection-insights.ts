@@ -48,8 +48,24 @@ const rejectionClassifierAgent = new Agent({
   instructions: REJECTION_CLASSIFIER_SYSTEM_PROMPT,
 })
 
-// Immediate pipeline (no debounce) — fires when a user rejects a ghost. Turns
-// the rejection into an active negative constraint for future agent turns.
+// ─────────────────────────────────────────────────────────────────────────
+// REJECTION INSIGHTS PIPELINE — immediate (no debounce), fires whenever the
+// user rejects a ghost's context node (POST /api/ghost-status). Turns that
+// single rejection into a standing, machine-readable lesson so future agent
+// turns on this canvas don't repeat the same mistake.
+//
+// Flow:
+//   1. A small classifier LLM reads the rejected content + the user's stated
+//      reason and decides a severity: hard_block (never repeat this
+//      approach), approach_pivot (the idea is fine, the framing isn't), or
+//      temporal_deferral (fine, just ill-timed — expires after a few turns).
+//      It also produces 1-3 short, actionable "insight_points".
+//   2. That classification is saved as a row in rejection_insights.
+//   3. The insight's id is appended to the rejecting agent's thread, on
+//      active_rejection_insight_ids — serialize() reads this list on every
+//      future call to that thread and injects the points as NEGATIVE
+//      CONSTRAINTS in the agent's prompt (see CORE-CONCEPTS.md).
+// ─────────────────────────────────────────────────────────────────────────
 export const rejectionInsightsPipeline = inngest.createFunction(
   {
     id: 'rejection-insights',
@@ -71,9 +87,12 @@ export const rejectionInsightsPipeline = inngest.createFunction(
       rejected_ghost_content: string
       rejection_reason: RejectionReason
     }
+    const startedAt = Date.now()
     logger.info('[pipeline:rejection-insights] start', { canvas_id, thread_id, rejection_reason })
 
-    // ── Step 1: Classify the rejection (gemini-2.5-flash, thinking:low) ────
+    // ── Step 1: Classify the rejection (gemini-2.5-flash, thinking:low) — ───
+    // turns the rejected content + reason into a severity + short rules a
+    // future agent turn can actually follow.
     const insight = await step.run('classify', async () => {
       const prompt = JSON.stringify({
         rejected_ghost_content,
@@ -85,8 +104,17 @@ export const rejectionInsightsPipeline = inngest.createFunction(
       })
       return object
     })
+    logger.info('[pipeline:rejection-insights] step:classify complete', {
+      canvas_id,
+      thread_id,
+      severity: insight.severity,
+      insight_point_count: insight.insight_points.length,
+    })
 
-    // ── Step 2: Save to rejection_insights (content-category row) ──────────
+    // ── Step 2: Persist the classification as a rejection_insights row. ────
+    // temporal_deferral insights get a turns_remaining counter (ticked down
+    // by the main pipeline's finalize step); the other two severities stay
+    // active indefinitely until the user's thinking moves past them.
     const savedInsight = await step.run('save-insight', async () =>
       createInsight({
         canvas_id,
@@ -102,7 +130,9 @@ export const rejectionInsightsPipeline = inngest.createFunction(
       })
     )
 
-    // ── Step 3: Append the insight id to the thread's active list ───────────
+    // ── Step 3: Register the insight as active on the rejecting agent's ────
+    // thread — this is the list serialize() reads to build the NEGATIVE
+    // CONSTRAINTS block injected into that agent's future prompts.
     await step.run('update-thread', async () => {
       const thread = await getByCanvas(canvas_id, agent_role)
       if (!thread) {
@@ -117,6 +147,7 @@ export const rejectionInsightsPipeline = inngest.createFunction(
       canvas_id,
       insight_id: savedInsight.id,
       severity: savedInsight.severity,
+      duration_ms: Date.now() - startedAt,
     })
   }
 )

@@ -9,9 +9,18 @@ import { getCanvas } from '../db/canvases.js'
 import { getOrCreateThread, appendMessage } from '../db/threads.js'
 import type { GhostPair } from '../../types/index.js'
 
-// Immediate pipeline (no debounce) — fires when the user draws an edge between
-// two nodes that BOTH already exist (both_existing=true, not a question edge).
-// Skips Attunement + Orchestrator and goes straight to the Articulator.
+// ─────────────────────────────────────────────────────────────────────────
+// ARTICULATOR PIPELINE — immediate (no debounce), fires the instant the user
+// draws an edge directly between two nodes that BOTH already exist on the
+// canvas (both_existing=true) and the edge is NOT a question edge. This is
+// the "connect two existing thoughts" gesture, so there is nothing to route:
+// Attunement and the Orchestrator are skipped entirely and the Articulator
+// runs straight away.
+//
+// Flow: guard → build+publish a context-only ghost (no question node) →
+// short animation sleep → serialize the Articulator's thread → stream its
+// reframing of the connection → publish DONE + persist the turn.
+// ─────────────────────────────────────────────────────────────────────────
 export const articulatorPipeline = inngest.createFunction(
   {
     id: 'articulator-pipeline',
@@ -19,9 +28,12 @@ export const articulatorPipeline = inngest.createFunction(
   },
   async ({ event, step }) => {
     const { canvas_id, session_id, edge_id, from_node_id } = event.data
+    const startedAt = Date.now()
     logger.info('[pipeline:articulator] start', { canvas_id, session_id, edge_id })
 
-    // ── Step 1: canAgentFire() — still required even though routing is skipped ─
+    // ── Step 1: canAgentFire() guard — still required even though routing ──
+    // is skipped, so an edge drawn while an earlier ghost on this edge is
+    // still pending review doesn't spawn a second one.
     const canFire = await step.run('guard-check', async () =>
       canAgentFire(canvas_id, 'articulator', edge_id)
     )
@@ -30,8 +42,10 @@ export const articulatorPipeline = inngest.createFunction(
       return
     }
 
-    // ── Step 2: Build SpawnDescriptor + publish SPAWN ──────────────────────
-    // The Articulator never produces a question node (has_question_node=false).
+    // ── Step 2: Build a SpawnDescriptor and publish SPAWN to Redis so the ──
+    // frontend can draw the placeholder ghost immediately. The Articulator
+    // never produces a question node (has_question_node=false) — it only
+    // ever reframes the connection itself.
     const descriptor = await step.run('publish-spawn', async () => {
       const d = buildSpawnDescriptor({
         trigger_node_id: from_node_id,
@@ -43,18 +57,31 @@ export const articulatorPipeline = inngest.createFunction(
       await publishSpawn(session_id, d)
       return d
     })
+    logger.info('[pipeline:articulator] step:spawn published', {
+      canvas_id,
+      session_id,
+      context_ghost_id: descriptor.context_node.ghost_id,
+    })
 
-    // ── Step 3: Sleep for ghost animation ──────────────────────────────────
+    // ── Step 3: Sleep so the frontend can animate the placeholder ghost ────
+    // before real tokens start arriving.
     await step.sleep('ghost-animation', '1500ms')
 
-    // ── Step 4: Serialize (canvas-stateful — thread + canvas) ──────────────
+    // ── Step 4: Serialize the Articulator's thread (canvas-stateful — full ──
+    // recency-tiered thread + canvas), the same as the main pipeline.
     const context = await step.run('serialize', async () => {
       const thread = await getOrCreateThread(canvas_id, 'articulator')
       const canvas = await getCanvas(canvas_id)
       return serialize(thread, 'articulator', canvas)
     })
+    logger.info('[pipeline:articulator] step:serialize complete', {
+      canvas_id,
+      session_id,
+      context_chars: context.length,
+    })
 
-    // ── Step 5: Stream context node → Redis CHUNK per token ────────────────
+    // ── Step 5: Run the Articulator and stream its reframing of the new ────
+    // connection to Redis as CHUNK messages targeting the context ghost id.
     const responseText = await step.run('stream-context', async () => {
       const stream = await streamArticulator({
         canvas_id,
@@ -63,8 +90,14 @@ export const articulatorPipeline = inngest.createFunction(
       })
       return streamAgentOutput(stream.textStream, descriptor.context_node.ghost_id, session_id)
     })
+    logger.info('[pipeline:articulator] step:stream complete', {
+      canvas_id,
+      session_id,
+      response_chars: responseText.length,
+    })
 
-    // ── Step 6: Publish DONE + append thread turn ──────────────────────────
+    // ── Step 6: Publish DONE and persist the response as a pending ghost ───
+    // pair on the thread, awaiting the user's accept/reject.
     await step.run('finalize', async () => {
       await publishDone(session_id)
 
@@ -84,6 +117,11 @@ export const articulatorPipeline = inngest.createFunction(
       })
     })
 
-    logger.info('[pipeline:articulator] done', { canvas_id, session_id, edge_id })
+    logger.info('[pipeline:articulator] done', {
+      canvas_id,
+      session_id,
+      edge_id,
+      duration_ms: Date.now() - startedAt,
+    })
   }
 )

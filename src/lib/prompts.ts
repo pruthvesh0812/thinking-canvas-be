@@ -15,7 +15,7 @@ const langfuse = new LangfuseClient()
 export async function getPrompt(name: string, fallback: string): Promise<string> {
   const prompt = await langfuse.prompt.get(name, { type: 'text', fallback })
   if (prompt.isFallback) {
-    logger.warn('langfuse prompt fallback used', { name })
+    logger.warn('[lib:prompts] fallback used', { name })
   }
   return prompt.prompt
 }

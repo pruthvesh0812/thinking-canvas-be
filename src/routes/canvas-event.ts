@@ -37,9 +37,11 @@ canvasEventRoute.post('/canvas-event', async (c) => {
   const body = await c.req.json().catch(() => null)
   const parsed = canvasEventSchema.safeParse(body)
   if (!parsed.success) {
+    logger.warn('[route:canvas-event] invalid payload', { issues: parsed.error.issues })
     return c.json({ error: 'invalid payload', issues: parsed.error.issues }, 400)
   }
   const { canvas_id, session_id, event_type } = parsed.data
+  logger.info('[route:canvas-event] received', { canvas_id, session_id, event_type })
 
   try {
     if (event_type === 'node.created') {

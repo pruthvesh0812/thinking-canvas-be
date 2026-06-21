@@ -18,6 +18,7 @@ sessionRoute.post('/session/start', async (c) => {
   const body = await c.req.json().catch(() => null)
   const parsed = sessionStartSchema.safeParse(body)
   if (!parsed.success) {
+    logger.warn('[route:session] start invalid payload', { issues: parsed.error.issues })
     return c.json({ error: 'invalid payload', issues: parsed.error.issues }, 400)
   }
   const { canvas_id } = parsed.data
@@ -58,6 +59,7 @@ sessionRoute.post('/session/complete', async (c) => {
   const body = await c.req.json().catch(() => null)
   const parsed = sessionCompleteSchema.safeParse(body)
   if (!parsed.success) {
+    logger.warn('[route:session] complete invalid payload', { issues: parsed.error.issues })
     return c.json({ error: 'invalid payload', issues: parsed.error.issues }, 400)
   }
   const { canvas_id, session_id } = parsed.data

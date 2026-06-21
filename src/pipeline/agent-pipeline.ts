@@ -35,6 +35,34 @@ function isStreamable(role: AgentRole): role is StreamableRole {
   return role === 'expander' || role === 'stress_tester'
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// MAIN PIPELINE — debounced 10s per session_id, triggered by every node the
+// user creates. A burst of rapid node creation collapses into a single run.
+//
+// Flow:
+//   1. Attunement reads the last few nodes and infers the user's cognitive
+//      mode/question style (a quick structured read, not a tool-using agent).
+//   2. Guard (canAgentFire) — if a ghost pair from an earlier turn is still
+//      pending the user's accept/reject, drop this run silently. Only one
+//      ghost can be "in flight" per trigger node at a time.
+//   3. Orchestrator picks which agent (if any) should respond, given the
+//      Attunement signals, the session phase, and the agents the user's tier
+//      unlocks. If it lands on Articulator/Outer-Sub/Observer here, there is
+//      nothing to stream in THIS pipeline — those have their own triggers.
+//   4. A SpawnDescriptor with pre-assigned ghost ids is built and published to
+//      Redis so the frontend can render placeholder ghost frames immediately,
+//      before any real content exists.
+//   5. A short sleep gives the frontend time to finish that placeholder
+//      animation before real tokens start arriving.
+//   6. The chosen agent's thread is serialized into LLM context (rejection
+//      insights are folded in as NEGATIVE CONSTRAINTS inside serialize()).
+//   7. The agent streams its response; each token is forwarded to Redis so
+//      the ghost fills in live on the user's canvas as it's generated.
+//   8. On completion: publish DONE (closes the SSE stream's stream cue),
+//      persist the full response + ghost pair onto the thread, and tick down
+//      any active temporal-deferral rejection insights by one turn.
+// ─────────────────────────────────────────────────────────────────────────
+
 // Builds the recent-node text block the Attunement Layer reads (last 3-5 nodes,
 // most recent last). Read directly from Supabase — Attunement uses no cursor tool.
 function formatRecentNodesForAttunement(
@@ -55,9 +83,12 @@ export const agentPipeline = inngest.createFunction(
   },
   async ({ event, step }) => {
     const { canvas_id, session_id, node_id } = event.data
+    const startedAt = Date.now()
     logger.info('[pipeline:agent] start', { canvas_id, session_id, node_id })
 
-    // ── Step 1: Attunement (gemini-2.5-flash, thinking OFF) ────────────────
+    // ── Step 1: Attunement reads the last 5 nodes and classifies HOW the user ─
+    // is thinking right now (cognitive_mode/question_style) — the Orchestrator
+    // consumes this next. No LLM tool calls; a single structured read.
     const attunement = await step.run('attunement', async () => {
       const recentNodes = await getRecentNodes(canvas_id, 5)
       return runAttunement({
@@ -66,8 +97,17 @@ export const agentPipeline = inngest.createFunction(
         recent_nodes: formatRecentNodesForAttunement(recentNodes),
       })
     })
+    logger.info('[pipeline:agent] step:attunement complete', {
+      canvas_id,
+      session_id,
+      cognitive_mode: attunement.cognitive_mode,
+      question_style: attunement.question_style,
+      phase_shift_suggested: attunement.phase_shift_suggested,
+    })
 
-    // ── Step 2: canAgentFire() — drop silently if a ghost is still pending ──
+    // ── Step 2: canAgentFire() guard — drop silently if a ghost pair from an ─
+    // earlier turn on this trigger node is still pending the user's review.
+    // Only one ghost may be "in flight" per trigger node at a time.
     const canFire = await step.run('guard-check', async () =>
       canAgentFire(canvas_id, 'expander', node_id)
     )
@@ -76,7 +116,9 @@ export const agentPipeline = inngest.createFunction(
       return
     }
 
-    // ── Step 3: Orchestrator → { route, question_style } ───────────────────
+    // ── Step 3: Orchestrator decides which agent responds, given Attunement ─
+    // signals, session phase, and the agents the user's tier unlocks
+    // (getAvailableAgents enforces tier limits server-side, never client-trusted).
     const route = await step.run('orchestrator', async () => {
       const canvas = await getCanvas(canvas_id)
       const session = await getSession(session_id)
@@ -97,6 +139,13 @@ export const agentPipeline = inngest.createFunction(
         available_agents: available,
       })
     })
+    logger.info('[pipeline:agent] step:orchestrator routed', {
+      canvas_id,
+      session_id,
+      node_id,
+      route: route.route,
+      question_style: route.question_style,
+    })
 
     // The Articulator/Outer-Sub/Observer routes are handled by their own
     // pipelines or run only at session complete. If the Orchestrator lands on
@@ -111,7 +160,9 @@ export const agentPipeline = inngest.createFunction(
     }
     const agentRole = route.route
 
-    // ── Step 4: Build SpawnDescriptor + publish SPAWN to Redis ─────────────
+    // ── Step 4: Build a SpawnDescriptor (pre-assigned ghost ids for the ────
+    // context node + question node) and publish a SPAWN message so the
+    // frontend can draw placeholder ghost frames before any content exists.
     const descriptor = await step.run('publish-spawn', async () => {
       const d = buildSpawnDescriptor({
         trigger_node_id: node_id,
@@ -123,19 +174,36 @@ export const agentPipeline = inngest.createFunction(
       await publishSpawn(session_id, d)
       return d
     })
+    logger.info('[pipeline:agent] step:spawn published', {
+      canvas_id,
+      session_id,
+      agent_role: agentRole,
+      context_ghost_id: descriptor.context_node.ghost_id,
+      question_ghost_id: descriptor.question_node?.ghost_id ?? null,
+    })
 
-    // ── Step 5: Sleep so the frontend can animate the ghost frames ─────────
+    // ── Step 5: Sleep so the frontend can animate the placeholder ghost ────
+    // frames before real tokens start arriving.
     // step.sleep is the real Inngest API (the docs' `inngest.sleep` does not exist).
     await step.sleep('ghost-animation', '1500ms')
 
-    // ── Step 6: Serialize thread (rejection_insights injected inside) ──────
+    // ── Step 6: Serialize the agent's thread into LLM context — rejection ──
+    // insights are folded in as NEGATIVE CONSTRAINTS inside serialize() itself.
     const context = await step.run('serialize', async () => {
       const thread = await getOrCreateThread(canvas_id, agentRole)
       const canvas = await getCanvas(canvas_id)
       return serialize(thread, agentRole, canvas)
     })
+    logger.info('[pipeline:agent] step:serialize complete', {
+      canvas_id,
+      session_id,
+      agent_role: agentRole,
+      context_chars: context.length,
+    })
 
-    // ── Step 7: Stream agent output → Redis CHUNK per token ────────────────
+    // ── Step 7: Run the chosen agent and stream its output to Redis as one ──
+    // CHUNK message per token, targeting the pre-assigned context ghost id —
+    // this is what makes the ghost "type out" live on the canvas.
     const responseText = await step.run('stream-context', async () => {
       const stream =
         agentRole === 'expander'
@@ -144,8 +212,18 @@ export const agentPipeline = inngest.createFunction(
 
       return streamAgentOutput(stream.textStream, descriptor.context_node.ghost_id, session_id)
     })
+    logger.info('[pipeline:agent] step:stream complete', {
+      canvas_id,
+      session_id,
+      agent_role: agentRole,
+      response_chars: responseText.length,
+    })
 
-    // ── Step 8: Publish DONE + append thread turn + decrement deferrals ─────
+    // ── Step 8: Publish DONE (tells the SSE route + frontend the ghost is ───
+    // fully rendered), persist the response as a ghost_pair turn on the
+    // thread (status starts 'pending' until the user accepts/rejects it),
+    // and tick down every active temporal-deferral rejection insight by one
+    // turn — those auto-expire after a few turns rather than blocking forever.
     await step.run('finalize', async () => {
       await publishDone(session_id)
 
@@ -167,13 +245,24 @@ export const agentPipeline = inngest.createFunction(
       // Decrement every active temporal deferral by one turn — the RPC flips
       // active=false when turns_remaining hits 0.
       const active = await getActiveByCanvas(canvas_id)
+      let decremented = 0
       for (const insight of active) {
         if (insight.severity === 'temporal_deferral' && insight.turns_remaining !== null) {
           await decrementTurnsRemaining(insight.id)
+          decremented++
         }
+      }
+      if (decremented > 0) {
+        logger.info('[pipeline:agent] step:finalize deferrals decremented', { canvas_id, decremented })
       }
     })
 
-    logger.info('[pipeline:agent] done', { canvas_id, session_id, node_id, route: agentRole })
+    logger.info('[pipeline:agent] done', {
+      canvas_id,
+      session_id,
+      node_id,
+      route: agentRole,
+      duration_ms: Date.now() - startedAt,
+    })
   }
 )

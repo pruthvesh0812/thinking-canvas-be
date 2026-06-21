@@ -24,9 +24,16 @@ ghostStatusRoute.post('/ghost-status', async (c) => {
   const body = await c.req.json().catch(() => null)
   const parsed = ghostStatusSchema.safeParse(body)
   if (!parsed.success) {
+    logger.warn('[route:ghost-status] invalid payload', { issues: parsed.error.issues })
     return c.json({ error: 'invalid payload', issues: parsed.error.issues }, 400)
   }
   const p = parsed.data
+  logger.info('[route:ghost-status] received', {
+    canvas_id: p.canvas_id,
+    thread_id: p.thread_id,
+    turn_index: p.turn_index,
+    context_node_status: p.context_node_status,
+  })
 
   try {
     const thread = await getById(p.thread_id)

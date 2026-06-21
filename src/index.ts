@@ -51,5 +51,5 @@ app.route('/api', sessionRoute)
 app.route('/api', stripeRoute)
 
 serve({ fetch: app.fetch, port: 3001 }, (info) => {
-  logger.info(`ThinkingCanvas API running on http://localhost:${info.port}`)
+  logger.info('[server] listening', { port: info.port })
 })
