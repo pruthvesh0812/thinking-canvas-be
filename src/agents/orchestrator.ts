@@ -2,10 +2,11 @@ import { Agent } from '@mastra/core/agent'
 import { z } from 'zod'
 import { models } from '../lib/llm.js'
 import { logger } from '../lib/logger.js'
+import { getPrompt } from '../lib/prompts.js'
 import type { AgentRole, AttunementState, EdgeType, SessionPhase } from '../../types/index.js'
 
 // System prompt is a constant — never interpolated from user data.
-const ORCHESTRATOR_SYSTEM_PROMPT = `
+export const ORCHESTRATOR_SYSTEM_PROMPT = `
 You are the Orchestrator for ThinkingCanvas — you decide which AI agent
 responds to the user's latest canvas activity.
 
@@ -64,7 +65,7 @@ export const orchestratorAgent = new Agent({
   id: 'orchestrator',
   name: 'Orchestrator',
   model: models.fast(),
-  instructions: ORCHESTRATOR_SYSTEM_PROMPT,
+  instructions: async () => getPrompt('orchestrator-system-prompt', ORCHESTRATOR_SYSTEM_PROMPT),
 })
 
 // Tier enforcement is server-side: if the model picks a route outside

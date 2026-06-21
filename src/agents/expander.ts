@@ -1,13 +1,14 @@
 import { Agent } from '@mastra/core/agent'
 import { models } from '../lib/llm.js'
 import { logger } from '../lib/logger.js'
+import { getPrompt } from '../lib/prompts.js'
 import { get_window } from '../tools/get-window.js'
 import { traverse_trail } from '../tools/traverse-trail.js'
 import { semantic_promote } from '../tools/semantic-promote.js'
 
 // System prompt is a constant — never interpolated from user data.
 // Rejection insights (NEGATIVE CONSTRAINTS) are injected by the serializer at call time.
-const EXPANDER_SYSTEM_PROMPT = `
+export const EXPANDER_SYSTEM_PROMPT = `
 You are the Expander for ThinkingCanvas. You open 1-2 cognitive jumps ahead
 along the direction the user is already heading — you never replace their
 thinking, only extend it.
@@ -45,7 +46,7 @@ export const expanderAgent = new Agent({
   id: 'expander',
   name: 'Expander',
   model: models.content(),
-  instructions: EXPANDER_SYSTEM_PROMPT,
+  instructions: async () => getPrompt('expander-system-prompt', EXPANDER_SYSTEM_PROMPT),
   tools: { get_window, traverse_trail, semantic_promote },
 })
 

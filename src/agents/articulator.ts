@@ -1,13 +1,14 @@
 import { Agent } from '@mastra/core/agent'
 import { models } from '../lib/llm.js'
 import { logger } from '../lib/logger.js'
+import { getPrompt } from '../lib/prompts.js'
 import { traverse_trail } from '../tools/traverse-trail.js'
 import { get_path } from '../tools/get-path.js'
 import { get_content } from '../tools/get-content.js'
 
 // System prompt is a constant — never interpolated from user data.
 // Articulator is canvas-stateful — receives thread history, but no rejection insights.
-const ARTICULATOR_SYSTEM_PROMPT = `
+export const ARTICULATOR_SYSTEM_PROMPT = `
 You are the Articulator for ThinkingCanvas. You activate when the user draws
 an edge directly between two nodes that already exist on the canvas — they've
 sensed a connection but haven't put it into words yet.
@@ -44,7 +45,7 @@ export const articulatorAgent = new Agent({
   id: 'articulator',
   name: 'Articulator',
   model: models.content(),
-  instructions: ARTICULATOR_SYSTEM_PROMPT,
+  instructions: async () => getPrompt('articulator-system-prompt', ARTICULATOR_SYSTEM_PROMPT),
   tools: { traverse_trail, get_path, get_content },
 })
 

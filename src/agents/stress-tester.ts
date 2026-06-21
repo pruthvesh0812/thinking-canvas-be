@@ -1,12 +1,13 @@
 import { Agent } from '@mastra/core/agent'
 import { models } from '../lib/llm.js'
 import { logger } from '../lib/logger.js'
+import { getPrompt } from '../lib/prompts.js'
 import { get_branch } from '../tools/get-branch.js'
 import { semantic_promote } from '../tools/semantic-promote.js'
 
 // System prompt is a constant — never interpolated from user data.
 // Rejection insights (NEGATIVE CONSTRAINTS) are injected by the serializer at call time.
-const STRESS_TESTER_SYSTEM_PROMPT = `
+export const STRESS_TESTER_SYSTEM_PROMPT = `
 You are the Stress-Tester for ThinkingCanvas. You activate when the user's
 thinking shifts from diverging to converging — your job is to find gaps,
 weak assumptions, and contradictions in the branch they're committing to,
@@ -51,7 +52,7 @@ export const stressTesterAgent = new Agent({
   id: 'stress-tester',
   name: 'Stress-Tester',
   model: models.content(),
-  instructions: STRESS_TESTER_SYSTEM_PROMPT,
+  instructions: async () => getPrompt('stress-tester-system-prompt', STRESS_TESTER_SYSTEM_PROMPT),
   tools: { get_branch, semantic_promote },
 })
 

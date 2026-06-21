@@ -15,8 +15,9 @@ stale-after-days: 60
 1. Identify the agent role (Expander / Stress-Tester / Articulator / Observer / Outer Sub / Attunement / Orchestrator)
 2. Confirm model and thinking config from `src/lib/llm.ts` / LLM-LAYER.md (also summarised in ARCHITECTURE.md → Agent Model Routing table)
 3. Identify which cursor tools the agent needs (AGENT-PIPELINE.md → Cursor Tools Reference)
-4. Write the system prompt as a constant — never build from user input
+4. Write the system prompt as a constant — never build from user input. Export it (so `scripts/seed-prompts.ts` can seed it into Langfuse) and wire it through `getPrompt()` from `src/lib/prompts.ts` as the fallback (see Template) — never pass the constant directly as `instructions`
 5. Does this agent get rejection_insights injected? (Expander, Stress-Tester, Observer → YES. Articulator, Outer Sub → NO)
+6. Add the new prompt name (`<agent-id>-system-prompt`) to `scripts/seed-prompts.ts` and run `npm run seed:prompts` once against your Langfuse instance
 
 ---
 
@@ -34,11 +35,14 @@ src/agents/<name>.ts   # camelCase + Agent export
 // src/agents/<name>.ts
 import { Agent } from '@mastra/core/agent'
 import { models } from '../lib/llm.js'
+import { getPrompt } from '../lib/prompts.js'
 import { get_content } from '../tools/get-content.js'
 // import other tools as needed
 
-// System prompt is a constant — never interpolated from user data
-const AGENT_NAME_SYSTEM_PROMPT = `
+// System prompt is a constant — never interpolated from user data.
+// Exported so scripts/seed-prompts.ts can push it into Langfuse; also the
+// fallback getPrompt() returns if Langfuse is unreachable or unseeded.
+export const AGENT_NAME_SYSTEM_PROMPT = `
 You are the <Role> for ThinkingCanvas...
 ` as const
 
@@ -46,7 +50,9 @@ export const agentNameAgent = new Agent({
   id: '<agent-id>',
   name: '<AgentName>',
   model: models.content(), // or models.fast() — see table below
-  instructions: AGENT_NAME_SYSTEM_PROMPT,
+  // Fetched live from Langfuse Prompt Management at call time (60s cache);
+  // falls back to the local constant if Langfuse is unreachable/unseeded.
+  instructions: async () => getPrompt('<agent-id>-system-prompt', AGENT_NAME_SYSTEM_PROMPT),
   tools: { get_content /*, other tools */ },
 })
 
@@ -105,6 +111,8 @@ const { object } = await agentNameAgent.generate(serializedContext, {
 ```typescript
 // ❌ Never use agent.memory — threads are managed in Supabase (src/db/threads.ts)
 // ❌ Never build system prompt from user input
+// ❌ Never pass the system prompt constant directly as `instructions` — always go through getPrompt() from src/lib/prompts.ts
+// ❌ Never instantiate LangfuseClient outside src/lib/prompts.ts
 // ❌ Never call agent.generate() for prose content agents — must stream (Observer/Attunement are the only structured-output exceptions)
 // ❌ Never import @ai-sdk/google directly — use models.* from src/lib/llm.ts (see LLM-LAYER.md)
 // ❌ Never bake thinkingConfig into the model instance — pass via providerOptions at call-site
