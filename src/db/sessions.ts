@@ -12,6 +12,19 @@ export async function getSession(id: string): Promise<Session> {
   return data as Session
 }
 
+// All sessions on a canvas, oldest first — used at session start to detect
+// whether prior sessions exist (and thus whether to inject a session_boundary).
+export async function getSessionsByCanvas(canvas_id: string): Promise<Session[]> {
+  const { data, error } = await db
+    .from('sessions')
+    .select('*')
+    .eq('canvas_id', canvas_id)
+    .order('start_time', { ascending: true })
+
+  if (error) throw new Error(`getSessionsByCanvas failed: ${error.message}`)
+  return (data ?? []) as Session[]
+}
+
 export async function createSession(canvas_id: string): Promise<Session> {
   const { data, error } = await db
     .from('sessions')
