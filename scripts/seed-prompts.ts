@@ -4,6 +4,7 @@
 // local constants change and you want Langfuse to pick up the new baseline.
 //
 // Usage: npx tsx scripts/seed-prompts.ts
+import 'dotenv/config'
 import { LangfuseClient } from '@langfuse/client'
 import { ARTICULATOR_SYSTEM_PROMPT } from '../src/agents/articulator.js'
 import { ATTUNEMENT_SYSTEM_PROMPT } from '../src/agents/attunement.js'
