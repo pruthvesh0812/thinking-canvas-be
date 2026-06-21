@@ -5,20 +5,51 @@ import { serve } from '@hono/node-server'
 import { serve as inngestServe } from 'inngest/hono'
 import { inngest } from './lib/inngest.js'
 import './mastra.js' // registers agents with Mastra so Langfuse tracing picks up their calls
+import { logger } from './lib/logger.js'
+
+// Routes
+import { canvasEventRoute } from './routes/canvas-event.js'
+import { streamRoute } from './routes/stream.js'
+import { ghostStatusRoute } from './routes/ghost-status.js'
+import { sessionRoute } from './routes/session.js'
+import { stripeRoute } from './routes/stripe.js'
+
+// Inngest pipeline functions
+import { agentPipeline } from './pipeline/agent-pipeline.js'
+import { articulatorPipeline } from './pipeline/articulator-pipeline.js'
+import { outerSubPipeline } from './pipeline/outer-sub-pipeline.js'
+import { rejectionInsightsPipeline } from './pipeline/rejection-insights.js'
+import { sessionCompletePipeline } from './pipeline/session-complete.js'
 
 const app = new Hono()
 
-app.use('/*', cors({ origin: process.env.FRONTEND_URL ?? '*' }))
+// CORS is restricted to the frontend origin only — never wildcard (the API is
+// single-tenant and the SSE stream must not be readable cross-origin).
+const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:3000'
+app.use('/*', cors({ origin: FRONTEND_URL }))
 
 app.get('/health', (c) => c.json({ status: 'ok' }))
 
-// Inngest worker — functions registered here in Story 9
+// Inngest worker — all five pipeline functions registered here.
 const inngestHandler = inngestServe({
   client: inngest,
-  functions: [],  // populated in inngest-pipelines story
+  functions: [
+    agentPipeline,
+    articulatorPipeline,
+    outerSubPipeline,
+    rejectionInsightsPipeline,
+    sessionCompletePipeline,
+  ],
 })
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', (c) => inngestHandler(c))
 
+// API routes — all mounted under /api.
+app.route('/api', canvasEventRoute)
+app.route('/api', streamRoute)
+app.route('/api', ghostStatusRoute)
+app.route('/api', sessionRoute)
+app.route('/api', stripeRoute)
+
 serve({ fetch: app.fetch, port: 3001 }, (info) => {
-  console.log(`ThinkingCanvas API running on http://localhost:${info.port}`)
+  logger.info('[server] listening', { port: info.port })
 })

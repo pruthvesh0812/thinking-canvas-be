@@ -580,7 +580,7 @@ export async function serialize(
   options?: { triggerNodeId?: string },
 ): Promise<string> {
   const rule = SERIALIZATION_RULES[agentRole]
-  logger.info('serialize:start', { canvas_id: canvas.id, agent_role: agentRole, message_count: thread.messages.length, thread_type: rule.threadType })
+  logger.info('[serializer:index] start', { canvas_id: canvas.id, agent_role: agentRole, message_count: thread.messages.length, thread_type: rule.threadType })
 
   // Canvas-map agents don't read this thread's recency tiers at all — their
   // context is the whole canvas plus their own structure history, both fetched
@@ -653,6 +653,6 @@ export async function serialize(
   const tierMap = classifyTiers(thread.messages)
   parts.push(...serializeTiered(thread, rule, nodeMap, seqMap, edges, tierMap))
 
-  logger.info('serialize:done', { canvas_id: canvas.id, agent_role: agentRole, parts: parts.length })
+  logger.info('[serializer:index] done', { canvas_id: canvas.id, agent_role: agentRole, parts: parts.length })
   return parts.join('\n\n')
 }

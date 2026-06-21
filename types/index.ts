@@ -313,14 +313,21 @@ export type Subscription = {
 // ─────────────────────────────────────────────
 
 // POST /api/canvas-event
-export const canvasEventSchema = z.object({
-  canvas_id: z.string().uuid(),
-  session_id: z.string().uuid(),
-  node_id: z.string().uuid(),
-  edge_type: z.enum(['logical', 'doubt', 'question', 'associative']).optional(),
-  both_existing: z.boolean().optional(),
-  event_type: z.enum(['node.created', 'edge.created']),
-})
+// The frontend writes the node/edge row to Supabase directly, then notifies the
+// backend with just its id. The route reads the authoritative row back — edge
+// flags (both_existing, edge_type) live in the DB and are never recomputed or
+// trusted from the request body (see DATABASE-SCHEMA non-negotiable).
+export const canvasEventSchema = z
+  .object({
+    canvas_id: z.string().uuid(),
+    session_id: z.string().uuid(),
+    node_id: z.string().uuid().optional(),
+    edge_id: z.string().uuid().optional(),
+    event_type: z.enum(['node.created', 'edge.created']),
+  })
+  .refine((d) => (d.event_type === 'node.created' ? !!d.node_id : !!d.edge_id), {
+    message: 'node.created requires node_id; edge.created requires edge_id',
+  })
 
 export type CanvasEvent = z.infer<typeof canvasEventSchema>
 
