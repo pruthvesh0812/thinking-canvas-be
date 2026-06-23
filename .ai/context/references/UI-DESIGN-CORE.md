@@ -39,24 +39,24 @@ If a screen fails one, the screen is wrong — not the rule.
 ## 1. The Canvas Surface (home screen)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ ◆ North Star: "<original_intent>"        Session 3 · diverging │  ← pinned header, always visible
-├─────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│        [solid node]──logical──▶[solid node]                     │
-│              │                                                   │
-│           doubt                                                  │
-│              ▼                                                   │
-│        [solid node]┄┄question┄┄▶ ░░ghost: question░░            │
-│                                        ▲                          │
-│                                   logical (ghost edge)            │
-│                                        │                          │
-│                              ░░ghost: context (reframe)░░         │
-│                                                                   │
-│                                                  infinite pan/zoom│
-├─────────────────────────────────────────────────────────────────┤
-│ ⊙ canvases   ⊙ session                     I'm done   + new node│  ← light footer chrome
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┬───┐
+│ ◆ North Star: "<original_intent>"      Session 3 · diverging │ ⊘3│  ← pinned header + rail (collapsed)
+├──────────────────────────────────────────────────────────────┤   │
+│                                                                │   │
+│        [solid node]──logical──▶[solid node]                  │   │
+│              │                                                │   │
+│           doubt                                               │   │
+│              ▼                                                │   │
+│        [solid node]┄┄question┄┄▶ ░░ghost: question░░         │   │
+│                                        ▲                       │   │
+│                                   logical (ghost edge)          │   │
+│                                        │                       │   │
+│                              ░░ghost: context (reframe)░░      │   │
+│                                                                │   │
+│                                               infinite pan/zoom│   │
+├──────────────────────────────────────────────────────────────┤   │
+│ ⊙ canvases   ⊙ session                     I'm done   + new node│
+└──────────────────────────────────────────────────────────────┴───┘
 ```
 
 - **North star bar**: pinned, always-visible, low-chrome. It is the one piece
@@ -67,12 +67,13 @@ If a screen fails one, the screen is wrong — not the rule.
   the user never flips this themselves (see Section 9, "what NOT to build").
 - **Canvas body**: infinite pan/zoom graph. Nodes + edges are the only content.
   No toolbars floating over the canvas itself — keep the thinking surface clean.
-  No side panel either — every AI contribution (ghost pair, Observer reveal,
-  locked-tier affordance) renders on-canvas, anchored to the node that
-  triggered it. A side panel would break the 1–2 jump rule (Section 0): it
-  would put AI output at a fixed screen location instead of next to its
-  trigger, restoring exactly the side-channel "answer box" the product
-  rejects.
+  No panel for *AI* content either — every AI contribution (ghost pair,
+  Observer reveal, locked-tier affordance) renders on-canvas, anchored to the
+  node that triggered it. A panel of AI output would break the 1–2 jump rule
+  (Section 0): it would put AI content at a fixed screen location instead of
+  next to its trigger, restoring exactly the side-channel "answer box" the
+  product rejects. (This is scoped to *AI* content — see the Open Threads
+  Rail just below, which carries the user's own state, not AI output.)
 - **Drift indicator**: when the Observer flags drift vs. the north star, the
   north star bar gets a subtle, non-alarming visual change (e.g. a thin
   underline accent) — not a popup, not a badge with a number. It invites a
@@ -82,6 +83,34 @@ If a screen fails one, the screen is wrong — not the rule.
   trigger disguised as anything else. Human-triggered only; the system never
   surfaces this on its own (e.g. on inactivity), since that would imply the
   system deciding the session is over.
+
+### Open Threads Rail
+
+The one piece of persistent chrome beyond the north star bar — repurposes
+what was originally a sidebar for AI suggestions (rejected, Section 9) into
+something that never carries AI content: a live mirror of the same three
+categories Session Complete's "Unresolved Threads" screen (Section 7,
+Screen 2) will eventually force a decision on — **unanswered question
+edges**, **open contradictions**, **empty nodes**.
+
+| State | Trigger | Content |
+|---|---|---|
+| **Collapsed** (default, always) | — | Thin icon + a neutral numeric count (`⊘3`). No color-coded urgency, no styling change between diverging and converging — same quiet weight regardless of phase. It's orientation, not a nudge. |
+| **Expanded** | Human click only | The three categories as a flat list. Each item, clicked, pans/selects the corresponding node on canvas — that's the only interaction it offers. |
+
+**Why it has no resolve action.** No Carry Forward / Discard control lives
+in the rail, even though that's exactly what Session Complete's Screen 2
+will ask for the same items. If the rail let you discard a thread mid-session,
+it would quietly reopen the convergence pressure Adaptive Attunement exists
+to hold off — "you have unfinished business" sitting in view during a
+diverging phase is itself a nudge toward closing things prematurely. The
+rail previews the data; only Session Complete spends it. This also means the
+rail must not change appearance based on the phase indicator — doing so
+would leak Attunement's internal read through a side door, which Section 9
+separately prohibits.
+
+Exact side (left/right) and whether it shares space with the canvas
+switcher are open — see Section 11.
 
 ---
 
@@ -278,6 +307,9 @@ violate Section 0's rules):
   is a ghost pair or Observer reveal anchored on-canvas to its trigger node
   (Section 0, 1–2 jump rule). A panel is a fixed location independent of
   what triggered it — that's the side-channel this product is built against.
+  (The Open Threads Rail, Section 1, is the one sidebar that exists — it
+  carries only the user's own canvas state, never AI content, and never a
+  resolve action, so it doesn't reopen this side-channel.)
 - No exposed "AI is thinking…" generic chatbot spinner — the ghost
   spawn-and-stream choreography (Section 4) *is* the thinking indicator.
   A separate spinner would reintroduce the answer-machine metaphor this
@@ -334,6 +366,11 @@ it's written down above.
 - Undo for an accidental ghost reject. Rejection currently triggers the
   Rejection Reason Selector immediately (Section 2) with no stated way back —
   worth deciding whether a reject is truly final or has a short undo window.
+- Open Threads Rail (Section 1) exact placement — which screen edge, and
+  whether it shares chrome with the canvas/session switcher or stays fully
+  separate. Also whether "empty nodes" needs a staleness threshold (how long
+  before a blank node counts as an open thread vs. one the user just created
+  a second ago).
 
 ---
 
