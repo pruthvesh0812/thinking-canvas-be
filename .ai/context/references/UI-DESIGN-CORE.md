@@ -381,3 +381,30 @@ it's written down above.
 - Pixel-accurate mockups or a Figma file.
 - Marketing/landing page design (pricing page, etc.) — this doc covers the
   in-app thinking surface only.
+
+---
+
+## 13. Deferred Beyond MVP (noted, not designed)
+
+Raised as future-version scope, explicitly not part of the v1 MVP this
+document designs for. Captured here only so it isn't lost — nothing in
+Sections 1–11 assumes any of this exists.
+
+- **Connectors** — integrations pulling content in from external
+  tools/sources. Likely lands as a new way to seed/ground a Context Node
+  (alongside the 6 types in Section 2), not a new canvas primitive.
+- **Skills** — user-configurable AI capabilities beyond the 5 fixed roles.
+  Flag for later, not resolved here: the product's current non-negotiable
+  is that agent system prompts are constants, never built from user input
+  (CLAUDE.md). A skills feature needs its own resolution of that boundary
+  before any design work starts.
+- **Generated doc (for download)** — an exportable, linear document derived
+  from the canvas/session. An output artifact, not a new editing surface —
+  doesn't conflict with the graph-not-document model (Section 0) since it's
+  a one-way projection out of the graph, not a second place the user thinks.
+- **Upload material** — user-supplied reference files become grounding
+  material on the canvas. Likely connects to Context Nodes / "ground before
+  nudge" (Section 0) rather than being a separate UI concept of its own.
+
+None of this affects the MVP sections above. Worth its own design pass once
+actually scheduled — not before.
