@@ -334,6 +334,11 @@ Treat every value below as a starting point to react to, not a decision.
 | Context type accents (6) | TBD | one hue/glyph per: reframe, mirror, pattern, reference, contradiction, appreciation |
 | Edge type styles (4) | solid / dashed / dotted+pulse / curved-dashed | see Section 3 |
 | Phase indicator copy | "diverging" / "converging" | plain text label, no icon decided yet |
+| `surface.base` | warm off-white, e.g. `#F7F3EC` | direction set Section 14.6, exact hex TBD |
+| `content.ink` | soft near-black, e.g. `#2B2622` | direction set Section 14.6, exact hex TBD |
+| `font.content` | humanist sans (e.g. Public Sans / Source Sans 3 register) | Section 14.6, exact family TBD |
+| `font.chrome` | quieter neutral sans, same family lower weight | Section 14.6 |
+| `node.ghost.font-style` | italic while pending → roman on accept | Section 14.4, pairs with the opacity/border transition |
 
 ---
 
@@ -342,7 +347,11 @@ Treat every value below as a starting point to react to, not a decision.
 Explicitly unresolved. Don't treat anything here as settled just because
 it's written down above.
 
-- Exact color palette / hex values — none chosen yet.
+- Exact color palette hex values within the warm-light direction (Section
+  14.6) — direction chosen, literal values are still a draft to react to.
+- Exact content/chrome font family names + licensing (Section 14.6) —
+  register chosen (humanist sans / quieter neutral sans), literal typeface
+  not chosen.
 - Iconography for the 6 context node types and the `direction_marker` glyph.
 - Canvas rendering approach (React Flow vs. custom canvas/WebGL) — affects
   what's even feasible for the pulse/glow/streaming effects above.
@@ -350,7 +359,9 @@ it's written down above.
   flow (Section 5, step 4).
 - Locked-tier visual treatment (Section 8) — lock icon vs. blur vs. ghost
   outline only.
-- Light/dark mode, and whether ghost translucency reads well in both.
+- Dark mode equivalent of the warm-light palette (Section 14.6), and
+  whether ghost translucency + the italic ghost-text cue (Section 14.4)
+  read well in it.
 - Mobile/responsive strategy — is this desktop-only for v1?
 - Accessibility: ghost-vs-real and the 4 edge types must be distinguishable
   without relying on color alone (shape/pattern already help — needs a
@@ -408,3 +419,130 @@ Sections 1–11 assumes any of this exists.
 
 None of this affects the MVP sections above. Worth its own design pass once
 actually scheduled — not before.
+
+---
+
+## 14. Design Philosophy — the human-first lens
+
+Not interaction rules (those are Sections 1–9) and not how the AI *speaks*
+(that's the agent prompts, backend — out of scope here). This section is the
+**lens a designer holds before every UI decision**, down to the smallest
+detail. One stance runs through all of it: the human and their thinking are
+the subject; the app and the AI are always subordinate to it.
+
+### 14.1 The stance, in one line
+
+**Human-first, everywhere — including the details no one will name.** The
+person's thinking is the only thing on screen that matters; every pixel of
+app and every AI mark exists to serve it and must visibly defer to it. If a
+design choice makes the tool more present and the thinker less central, it's
+wrong — no matter how small.
+
+### 14.2 What the designer holds before every decision
+
+Six lenses. Run each screen, component, and micro-interaction past all six.
+
+- **The human's content is always visually dominant.** Their nodes are the
+  most solid, most saturated, most legible thing in view; everything AI is
+  translucent and quieter (Section 2). The hierarchy of attention is never
+  in question at a glance.
+- **The system never takes the wheel.** No AI mark ever steals focus,
+  scroll, or selection. A ghost can appear, but the cursor stays where the
+  human left it; the viewport doesn't jump to AI output; typing is never
+  interrupted. The human can always keep working *through* an AI arrival.
+- **Ignore is a first-class response.** Every AI element can be left
+  untouched forever with no penalty, no fade, no nag (Section 2). Nothing
+  the human didn't initiate ever blocks, traps, or demands a reply.
+- **Calm by default, detail on demand.** Affordances (accept/reject, Observer
+  reveal, rail contents) stay hidden until the human reaches for them
+  (hover/focus) — the resting state is quiet. The canvas is never pre-loaded
+  with controls the human didn't ask to see.
+- **The human's hand stays on everything reversible.** Spatial arrangement
+  is theirs and never auto-reorganized; destructive moves are avoidable or
+  recoverable; consent is asked at the moment of the act, not assumed.
+- **Plain and unhurried.** Chrome copy is plain human language, never system
+  jargon; motion is unhurried, never urgent; nothing uses notification or
+  alert patterns. The app behaves like a calm room, not a feed.
+
+**Human-first in the small details** (the part that's easy to skip): the
+empty state invites the *human's* first mark, not the AI's. A spawning ghost
+never occludes an existing human node. The brightest pixel on screen is
+always something the human made, never a CTA. A 200ms hover delay before
+accept/reject affordances appear, so a glance doesn't summon controls. These
+are the kinds of choices where the philosophy actually lives — not in the big
+layout, but in whether each tiny default protects the thinker or pesters them.
+
+### 14.3 The look
+
+How the surface should read, derived from the stance above and the Foundation
+Principles — not yet pixels (those are 14.6 + Section 11).
+
+- **Quiet, spacious, low-chrome.** Generous negative space — nodes breathe,
+  the canvas is a place to think, not a screen to fill. Chrome recedes to the
+  edges (north star bar, footer, rail); the thinking surface stays clean
+  (Section 1).
+- **Solid-vs-translucent is the primary visual language.** The whole look is
+  organized around the human (solid, present) / AI (translucent, provisional)
+  distinction. Everything else — color, weight, motion — is in service of
+  keeping that contrast instantly readable.
+- **Restraint over richness.** 4 edge types + 6 context types are a lot to
+  distinguish; carry most of it through shape/weight/pattern (Sections 2–3)
+  and spend color sparingly, so the surface stays calm. Every accent earns
+  its place against the calm-canvas rule or it's cut.
+- **Comfort for the long haul.** People stare at this for an hour. Warm, soft
+  contrast over clinical glare; nothing that fatigues or strains.
+
+### 14.4 Motion
+
+- Organic, unhurried easing — **ink settling, not UI snapping.** No
+  springy/bouncy overshoot anywhere; overshoot signals "app/toy," which
+  fights the calm-room stance (14.1).
+- Exactly **one ceremonial moment**: ghost accept (`ghost.accept.transition`,
+  Section 10) — dashed→solid, opacity ramp. It's the ownership-transfer
+  moment (Section 2) and should be felt, slightly slow, deliberate — the
+  only "event" on an otherwise ambient surface.
+- Nothing else pulses for attention except the single privileged `question`
+  edge (Section 3) — alive, not alarming. No notification-style motion
+  anywhere else, including the Open Threads Rail (Section 1), which is
+  explicitly phase-invariant and non-urgent.
+- **Ghost text renders italic while pending, settling to roman on accept** —
+  a visual rendering cue (not a content/voice rule): it reinforces "offered,
+  not yours yet" in the type itself, alongside the opacity/border change.
+  Doubles as a non-color cue for ghost-vs-real that survives a colorblind
+  pass (Section 11).
+
+### 14.5 Anti-aesthetic — what the visual style must NOT be
+
+- **Not the generative-AI hype costume** — no purple gradients, no ✦
+  sparkles, no glowing orbs, no "AI" badges, no shimmer. The product is
+  *anti*-answer-machine; it must not cosplay as one.
+- **Not a productivity dashboard** — no charts, streaks, progress bars,
+  completion %, gamification. Thinking isn't a KPI.
+- **Not a chatbot** — no bubbles, no avatar, no typing-dots (Section 9).
+- **Not clinical** — avoid pure-white glare and harsh contrast on a surface
+  people stare at for an hour.
+
+### 14.6 Palette & type direction (taste call, not derived)
+
+Direction chosen; literal values are still open (Section 11) — treat
+everything below as a draft to react to, same convention as Section 10.
+
+- **Base surface — warm light, paper & ink.** An off-white warm base (not
+  pure white) with soft ink-dark content color (not pure black). Reads as a
+  considered notebook/studio, not a SaaS dashboard — chosen over a cool
+  architectural light or a dark-focus surface specifically because it's the
+  gentlest on long sessions and the least likely to slide into "tool" or
+  "AI product" territory. Draft starting point: surface `#F7F3EC`,
+  content ink `#2B2622`.
+- **Content typography** (the human's own writing + ghost text, Section 2):
+  a **humanist sans** (register like Public Sans / Source Sans 3 — exact
+  family TBD). Chosen over a serif to keep long writing sessions plainly
+  legible without a "literary" affectation; chosen over a geometric/neutral
+  sans specifically to avoid the generic-productivity-tool read that 14.5
+  warns against.
+- **Chrome typography** (north star bar, footer, Open Threads Rail, labels):
+  a quieter neutral sans, distinct from content type only in weight/size —
+  never in personality. Chrome should recede; content should read.
+- This settles the *direction* of Section 11's palette item; exact hex
+  values, the literal font family/license, and the dark-mode equivalent of
+  this palette remain open for the next design pass.
