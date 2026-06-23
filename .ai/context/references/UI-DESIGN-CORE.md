@@ -55,7 +55,7 @@ If a screen fails one, the screen is wrong — not the rule.
 │                                                                   │
 │                                                  infinite pan/zoom│
 ├─────────────────────────────────────────────────────────────────┤
-│ ⊙ canvases   ⊙ session                              + new node  │  ← light footer chrome
+│ ⊙ canvases   ⊙ session                     I'm done   + new node│  ← light footer chrome
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,10 +67,21 @@ If a screen fails one, the screen is wrong — not the rule.
   the user never flips this themselves (see Section 9, "what NOT to build").
 - **Canvas body**: infinite pan/zoom graph. Nodes + edges are the only content.
   No toolbars floating over the canvas itself — keep the thinking surface clean.
+  No side panel either — every AI contribution (ghost pair, Observer reveal,
+  locked-tier affordance) renders on-canvas, anchored to the node that
+  triggered it. A side panel would break the 1–2 jump rule (Section 0): it
+  would put AI output at a fixed screen location instead of next to its
+  trigger, restoring exactly the side-channel "answer box" the product
+  rejects.
 - **Drift indicator**: when the Observer flags drift vs. the north star, the
   north star bar gets a subtle, non-alarming visual change (e.g. a thin
   underline accent) — not a popup, not a badge with a number. It invites a
   glance, not a reaction.
+- **"I'm done" affordance**: the only entry point into the Session Complete
+  flow (Section 7). Lives in the footer, plain text/button — not a modal
+  trigger disguised as anything else. Human-triggered only; the system never
+  surfaces this on its own (e.g. on inactivity), since that would imply the
+  system deciding the session is over.
 
 ---
 
@@ -258,6 +269,15 @@ there's something real to lose (a closed first session).
 **What NOT to build** (explicit, because these are easy mistakes that
 violate Section 0's rules):
 - No "Diverge / Converge" mode switch — the phase indicator is read-only.
+- No manual self-reported state/mood selector of any kind (e.g. "Flow /
+  Exploring / Stuck" pills). Cognitive mode is Adaptive Attunement's job —
+  read silently from language quality + node velocity, never asked of the
+  user. A self-report control duplicates what Attunement already infers,
+  and duplicating it in the UI invites the two to disagree.
+- No sidebar/side panel for AI suggestions, helpers, or chat. All AI output
+  is a ghost pair or Observer reveal anchored on-canvas to its trigger node
+  (Section 0, 1–2 jump rule). A panel is a fixed location independent of
+  what triggered it — that's the side-channel this product is built against.
 - No exposed "AI is thinking…" generic chatbot spinner — the ghost
   spawn-and-stream choreography (Section 4) *is* the thinking indicator.
   A separate spinner would reintroduce the answer-machine metaphor this
@@ -306,6 +326,14 @@ it's written down above.
 - Multi-canvas switcher UI — sidebar, dropdown, or separate screen.
 - Node card sizing/auto-layout algorithm for the graph (manual placement vs.
   force-directed vs. sequence-driven layout).
+- Orientation/navigation aids for large, multi-session canvases (jump-to-node
+  search, breadcrumb of past sessions, minimap). Section 0's "calm canvas"
+  rule argues against a persistent minimap, but with no aid at all a canvas
+  with dozens of nodes across many sessions may become unnavigable by pan/zoom
+  alone. Needs a decision, not an assumption either way.
+- Undo for an accidental ghost reject. Rejection currently triggers the
+  Rejection Reason Selector immediately (Section 2) with no stated way back —
+  worth deciding whether a reject is truly final or has a short undo window.
 
 ---
 
