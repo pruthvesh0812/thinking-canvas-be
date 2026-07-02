@@ -77,12 +77,98 @@ asking is sacred.
 > v1 keeps this deterministic and testable. An LLM-driven intensity read can be
 > layered on later (see Open Questions).
 
+## Two axes: Trigger (generate) vs Show (reveal)
+
+The intensity ladder above is only the **Show** axis. There is a second,
+orthogonal axis — **Trigger** (whether to *generate* at all) — and separating
+them is what makes the per-action behaviour coherent. A response can be
+generated-and-held (glow only), then revealed later by a pure Show event that
+generates nothing new.
+
+Canvas actions fall into four intent classes, and the class — not the specific
+action — decides Trigger/Show:
+
+| Action class | Actions | Trigger | Show | Rationale |
+|---|---|---|---|---|
+| **Flow / creation** (heads-down) | typing, node create, edge create, toolbox click | no | no | mid-thought; context not ripe — don't touch |
+| **Curation / attention** (eyes on canvas) | move node, delete node/edge, focus/hover human node | no | yes | user is looking at structure — safe to surface held content |
+| **Deliberate / help-seeking** | sticky-note create/move/delete, toolbox dwell, hover AI edge label | yes | yes | an intentional "help me" signal |
+| **Ghost interaction** (context-changing) | accept/reject ghost, accept/reject observer edge, hover old ghost | via impact check | yes (+warn if stale) | the action mutates context → must re-check staleness |
+
+Consequence: **generation is no longer driven by `canvas/node.created`.** Creation
+events only feed context and reset the attention timer; the actual trigger is
+*timer-expiry + maturity gate* (or an explicit deliberate/pull signal). Show is
+driven by the curation/attention signals.
+
+Reusable primitive: sustained-attention items (toolbox hover, human-node focus)
+are **dwell timers** — the same countdown mechanism as the idle timer, anchored
+to a thing instead of the whole canvas.
+
+## The Observer maturity & impact gate (new Observer job)
+
+Before any generation, the Observer runs a **maturity gate**: is the canvas
+mature enough that expanding / stress-testing / associating would *genuinely*
+augment, or should we wait for content to ripen? This is the fix for the
+"AI answered before the picture was complete" failure.
+
+- **Cost caveat:** the full Observer (gemini-2.5-flash + thinking:high +
+  canvas-map + tools) is too heavy to run before every trigger. Recommendation:
+  a lightweight **gate mode** — a cheap structured read over the canvas-map
+  *summaries* (same shape as Attunement) → `{ mature: bool,
+  augmentable_by: AgentRole[], impact: 'none' | 'material', reason }`. Keep the
+  heavy Observer for background + Session Complete. Same brain, cheap reflex.
+- The same gate serves the **impact check** below.
+
+## Context snapshot & staleness (Impact Check)
+
+Every ghost is generated against a **context snapshot** and the canvas then moves
+on. On any context-changing action (accept/reject an old ghost, delete a
+depended-on node, hover an old ghost), the Observer's impact check classifies the
+change: `none` → show as-is; `material` → show-with-warning ("this may not
+capture your latest change — regenerate?") or re-trigger. This unifies list
+cases 2, 12–15, and 24, and generalizes the existing "2 new nodes without
+interaction → ignored" rule into a real staleness model.
+
+Each `intervention_offer` / ghost therefore records the snapshot it was born from
+(e.g. a context hash or the trigger node-sequence index) so impact can be judged.
+
+## The interactive deferral timer
+
+Today's debounce is an invisible, fixed 10s Inngest timer. This makes it
+**visible + user-controlled**, matching the UI concept (a circular countdown +
+an ambient "processing" waveform along the canvas floor, with pause/resume):
+
+- Adaptive period: default 10s; **5s on HIGH readiness**; reset to 5s when the
+  user manually defers (pauses then resumes creating); back to 10s after a
+  response lands.
+- **Ownership (decision):** recommended — the **frontend owns the visible
+  attention-timer** (idle detection, countdown, pause/resume are local +
+  responsive) and POSTs the trigger on expiry; the **backend owns
+  content-maturity + generation**. The Inngest debounce demotes to a safety net
+  that collapses duplicate triggers.
+- The ambient waveform is a new low-intensity surface with two states:
+  **processing** (working) vs. an offer glow (**has something**) — both belong on
+  the Ambient rung of the spectrum.
+
+## Attention states → Show behaviour
+
+| State | How inferred | Behaviour |
+|---|---|---|
+| **Waiting** | user idle after a deliberate/pull signal | reveal promptly |
+| **Thinking** | idle but actively returning to create | **glow-first, full on hover** (Anchored→Materialize) |
+| **Away** | frontend receptivity hint (long idle, cursor left canvas/tab) | generate + show by default |
+
+"Away" is a frontend-**aggregated** receptivity hint, never raw event streaming.
+Cursor movement feeds this hint (dwell = soft focus; left-canvas = away) — it is
+never itself a Trigger or a discrete Show event.
+
 ## Blast Radius
 | Component | Impact |
 |---|---|
 | `types/index.ts` | New `InterventionIntensity`, `InterventionOffer`; extend `RedisMessage` union |
 | `src/lib/intervention.ts` | NEW — pure `decideIntensity()` + receptivity/salience scoring |
-| `src/pipeline/agent-pipeline.ts` | After routing, branch: low intensity → publish offer + stop (no content agent); Level 4 → existing spawn/stream |
+| `src/agents/observer.ts` | Add a lightweight **gate mode** (`runMaturityGate()`) → `{ mature, augmentable_by, impact, reason }` over canvas-map summaries |
+| `src/pipeline/agent-pipeline.ts` | Trigger source changes (no longer `node.created`-driven); add maturity-gate step BEFORE routing; branch on intensity: low → offer + stop, Level 4 → spawn/stream |
 | `src/pipeline/intervention-materialize.ts` | NEW — immediate pipeline fired by a pull; runs content agent + streams (today's Steps 4–8) |
 | `src/streaming/offer.ts` | NEW — `buildOffer()` + `publishOffer()` / `publishWithdraw()` (mirror of `spawn.ts`) |
 | `src/db/intervention-offers.ts` | NEW — persist/read offer rows + status transitions |
@@ -105,7 +191,8 @@ CREATE:
 
 MODIFY:
   types/index.ts                       → InterventionIntensity, InterventionOffer, RedisMessage
-  src/pipeline/agent-pipeline.ts       → intensity branch after Orchestrator
+  src/agents/observer.ts               → runMaturityGate() (lightweight gate mode)
+  src/pipeline/agent-pipeline.ts       → maturity gate + intensity branch; new trigger source
   src/lib/guards.ts                    → offers count as in-flight; offer rate cap
   src/index.ts                         → register route + materialize function
 
@@ -169,6 +256,7 @@ Yes — `intervention_offers` (+ RLS, owner-scoped like every table):
 ```
 id uuid pk · canvas_id · session_id · agent_role · trigger_node_id
 anchor_node_ids uuid[] · intensity · salience numeric · headline text null
+context_snapshot text/jsonb  (hash or trigger node-sequence index — for the Impact Check)
 status (offered|pulled|dismissed|expired) · created_at · resolved_at null
 ```
 
@@ -189,6 +277,10 @@ DB write + receptivity update, no Inngest event needed.)
 - **Stale offers** — anchors the user has moved past are noise; withdraw promptly.
 - **Double-fire** — `decideIntensity` must run *after* `canAgentFire`, so a held
   offer blocks a new one on the same node.
+- **Gate cost** — the maturity/impact gate runs on the hot path; if it uses the
+  full thinking:high Observer it dominates latency + cost. Keep it lightweight.
+- **Timing split-brain** — if the timer moves to the frontend, backend and
+  frontend must not both try to own "when to fire." Pick one owner (see Q5).
 
 ## Open Questions
 Defaults are pre-selected (marked ✅) so implementation can start; override any.
@@ -201,10 +293,20 @@ Defaults are pre-selected (marked ✅) so implementation can start; override any
 4. **User preference lever** — add a global "interruption tolerance" setting
    (Do-Not-Disturb ↔ Proactive) now, or after the model proves out? It's the
    cleanest explicit "respect my boundaries" control.
+5. **Timer ownership** — ✅ frontend owns the visible attention-timer + pause/resume,
+   POSTs on expiry; backend owns maturity + generation (vs. backend streams ticks
+   over SSE).
+6. **Maturity gate weight** — ✅ lightweight Observer *gate mode* (vs. full
+   thinking:high Observer on every trigger).
+7. **Impact check on curation** — does move/delete "show" route through the impact
+   check too (a delete can invalidate a held ghost), or only ghost interactions as
+   the raw table implied? (Leaning: yes, route it through.)
 
 ## Task Breakdown
-- **task-01:** types + `intervention_offers` migration + RLS + `decideIntensity()`
-- **task-02:** `src/streaming/offer.ts` + `agent-pipeline` intensity branch + guard update
-- **task-03:** `intervention-materialize` pipeline + `intervention` route + `src/index.ts` wiring
-- **task-04:** receptivity feedback model (offer-response → intensity baseline) + withdraw-on-stale
-- **task-05:** doc ratification via `update-ai-context` (CANVAS-SYNC.md + non-negotiable #9)
+- **task-01:** types (+ `context_snapshot`) + `intervention_offers` migration + RLS + `decideIntensity()`
+- **task-02:** Observer `runMaturityGate()` + wire the gate as the pre-routing step in `agent-pipeline`
+- **task-03:** `src/streaming/offer.ts` + `agent-pipeline` intensity branch + guard update
+- **task-04:** `intervention-materialize` pipeline + `intervention` route (pull/dismiss) + `src/index.ts` wiring
+- **task-05:** Impact Check (snapshot compare) + staleness warnings + withdraw-on-stale
+- **task-06:** receptivity feedback model (offer-response → intensity baseline) + attention-state inference
+- **task-07:** doc ratification via `update-ai-context` (CANVAS-SYNC.md + non-negotiable #9 + Observer's new gate role)
