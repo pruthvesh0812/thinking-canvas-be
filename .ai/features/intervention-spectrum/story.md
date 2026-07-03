@@ -41,12 +41,13 @@ Two payoffs from one idea:
 
 ## The Spectrum
 
-**Glow-first is universal (decided).** Every ghost — anchored to a node — arrives
-as a glow (halo on the node + the ghost edge's endpoints); **hover reveals the
-full content.** Whether hover reveals instantly (content pre-generated) or
-generates on the spot (lazy) is invisible backend state. So the Show rungs are no
-longer "glow vs. full" — the glow is the universal arrival, hover the universal
-reveal. The rungs differ by *surface* and *headline*, not by whether content shows:
+**Glow-first *arrival* (decided).** Every ghost — anchored to a node — arrives as a
+glow (halo on the node + the ghost edge's endpoints); it never barges in
+fully-formed. The **reveal** is then gated by `f(attention state, show-rule)` — see
+"Attention states × show rules" (waiting reveals on a glance; thinking needs a
+deliberate hover). Whether reveal is instant (content pre-generated) or generates
+on the spot (lazy) is invisible backend state. So the Show rungs differ by
+*surface* and *headline*, not by whether content shows:
 
 | Level | User sees | Backend emits | Content generated? | Picked when |
 |---|---|---|---|---|
@@ -127,25 +128,47 @@ a genuine, in-range augmentation?" — and it must return **evidence** (which no
 what is unexplored/untested/unconnected). No evidence → that agent fails. No agent
 passes → **hold** (not mature yet).
 
+Preconditions are taken from each agent's actual system prompt (`src/agents/*.ts`):
+
 | Agent | Eligible when | Evidence the gate must find | "Not mature" when |
 |---|---|---|---|
-| **Expander** | phase = diverging | a frontier node with a real unexplored direction 1–2 jumps ahead | dead-end · already densely branched · too sparse |
-| **Stress-Tester** | phase = converging | a committed claim with a gap / weak assumption / live contradiction | nothing committed yet · already well-defended |
-| **Outer Subconscious** | any (esp. question edge) | a concept with a strong non-obvious analog in a distant domain | purely local content, no cross-domain reach |
-| **Articulator** | edge between existing nodes | two existing nodes with a real but *unnamed* relationship | no such pair · relation already explicit |
+| **Expander** | local phase = diverging | a trail with momentum **and** open space 1–2 jumps ahead along it | isolated node (no trail) · direction exhausted · already densely branched |
+| **Stress-Tester** | local phase = converging | a committed subtree with ≥1 attackable surface: contradiction / hidden assumption / scope gap / dependency risk | nothing committed (pure diverge) · no attackable surface |
+| **Outer Subconscious** | any phase | a concept with a strong non-obvious analog — **cross- OR intra-domain** (not only distant fields) | purely literal/local content, no associative lift |
+| **Articulator** | any phase | two existing nodes with a real but *unnamed* relationship (emits 2–3 readings, no question node) | no such pair · link already labeled/explicit |
 
-Output is a **candidate set**, not a boolean:
-`[{ agent, locus_node_ids, headroom, jump_distance, confidence }]` — phase-filtered,
-and **deduped against prior ghosts incl. rejected ones** (the gate must see
-rejection insights so it never re-offers a refusal). Empty set → hold.
+Selection is **single best agent** (decided — never a ranked set; we don't dilute
+help). Within {Expander, Stress-Tester} the pick is by *local* phase; Outer-Sub /
+Articulator are phase-agnostic and can outrank both when their evidence is
+stronger. Output: `{ agent, locus_node_ids, headroom, jump_distance, confidence }`
+— **deduped against the FULL active rejection-insight set** (decided) so it never
+re-offers a refusal. No qualifying agent → hold.
 
-**Two open forks (the "foundation first, then proceed" items):**
-1. **Gate subsumes the Orchestrator?** It already decides who + where with more
-   context than the phase-rules. Cleanest: gate → candidate set → thin selector
-   (tier + `canAgentFire`) picks top; Orchestrator rules retire/fold in. Attunement
-   stays (supplies posture / `question_style`, orthogonal to headroom).
-2. **1–2 jump ownership:** gate does a *coarse* in-range filter; the content agent
-   enforces exact distance — don't pay the gate to be precise.
+**Consequence — Outer-Sub & Articulator gain a proactive path.** Today they fire
+ONLY on explicit edges, via immediate pipelines that bypass the Orchestrator
+(question edge → Outer-Sub; edge-between-existing → Articulator). Making them gate
+candidates lets the gate *proactively* offer an associative leap or articulate an
+undrawn link — more help, but new anchoring (proactive Outer-Sub needs the gate to
+supply the node + intra/cross hint; proactive Articulator needs the two node ids).
+**Decision (open):** enable proactive Outer-Sub/Articulator in v1, or keep them
+explicit-only and let the gate choose among Expander/Stress-Tester (+Observer)?
+
+**1–2 jump ownership:** gate does a *coarse* in-range filter; the content agent
+enforces exact distance — don't pay the gate to be precise.
+
+### The gate replaces the Orchestrator (decided) — what to re-home
+
+Traced every dependent (grep + `agent-pipeline.ts`): only the main pipeline
+consumes the Orchestrator's routing. Retiring it means:
+
+| Orchestrator did… | Re-homed to |
+|---|---|
+| **route** (which agent) | the gate (single best) |
+| **tier enforcement** (`getAvailableAgents`) | gate selection — but *don't substitute a weaker agent*; if the best pick is tier-locked, surface a low-intensity **upgrade offer** (substituting Stress-Tester→Expander for a converging user is actively wrong — Expander re-diverges, which the Stress-Tester prompt forbids) |
+| **`question_style`** | already sourced from Attunement via the serializer (agents read the ATTUNEMENT block, not the Orchestrator's copy, which is only logged) — drops cleanly |
+| registered in `src/mastra.ts` (tracing) | swap for the gate agent |
+
+The immediate pipelines (articulator/outer-sub) never used the Orchestrator → untouched.
 
 **Cost:** full-canvas + thinking:high is the most expensive call and now runs on
 the hot path. Mitigation — the Impact Check gates the gate: **if nothing material
@@ -162,14 +185,33 @@ fires via the main pipeline today, and `phase_shift_suggested` only nudges
 
 We build transitions from zero — design for **oscillation**, not a one-way latch:
 - Phase is a both-ways state, flippable any number of times in a session.
-- The **maturity gate advances phase** as part of its pass (it already reads the
-  whole canvas + `phase_shift_suggested`, whose prompt computes shifts "or vice
-  versa"), then filters candidates by the *new* phase — detect + act in one shot.
-  Wire `updatePhase()` here.
 - **Hysteresis:** require a confident/sustained shift before flipping (don't
   chatter on noise). A curation burst (see below) is a strong converging signal.
 - **Record transitions** — the click (diverge→converge) and re-divergence are what
   the Observer + Session Complete care about; flip-count is a health signal.
+
+### Re-divergence has four reasons — and phase is really LOCAL, not global
+
+Why a brainstormer reopens after converging (the reason decides the AI response):
+
+| Reason | What happened | AI response |
+|---|---|---|
+| **Checkpoint descent** | converged on X; X is a settled base; explore options *from* X | Expander on X's children — healthy recursion |
+| **Backtrack** | a stress-test broke the converged idea → reopen the *same* level | Expander that **carries the breaking insight** forward |
+| **Reframe** | new dimension reopens the space | Expander a level up; Observer may flag drift |
+| **Parallel branch** | attention moved to a different, still-open region | not "re"-divergence at all |
+
+The last row is the tell: on a spatial graph, **phase is a property of the
+current frontier, not the whole session** (one cluster can be converged while
+another is wide open). Recommended foundation:
+- Keep `session.current_phase` as a cheap **coarse/dominant** phase (Attunement's
+  session-level read).
+- The **gate computes an ephemeral LOCAL phase** for its chosen locus's
+  neighborhood and picks Expander-vs-Stress-Tester on *that*; it advances phase
+  via `updatePhase()` when the dominant read shifts.
+- Then re-divergence needs **no special detector** — it emerges when the frontier
+  moves to a reopening region. The only reason needing explicit handling is
+  **backtrack**: carry the Stress-Tester's breaking insight into the re-divergence.
 
 ## Context snapshot & staleness (Impact Check)
 
@@ -202,18 +244,21 @@ an ambient "processing" waveform along the canvas floor, with pause/resume):
   **processing** (working) vs. an offer glow (**has something**) — both belong on
   the Ambient rung of the spectrum.
 
-## Attention states (two only: waiting / thinking)
+## Attention states (two only: waiting / thinking) × show rules
 
-Decided: only **waiting** and **thinking** (no "away"). Since glow-first is
-universal, these no longer switch *whether* we glow — they are a **receptivity
-input** to the timer + glow prominence:
+Decided: only **waiting** and **thinking** (no "away"). Glow-first is the *arrival*
+default (nothing barges in fully-formed); the **reveal threshold** is then
+`f(attention state, the action's show-rule)` — this is how the state pairs with the
+per-action Show matrix:
 
-| State | How inferred (frontend) | Effect |
-|---|---|---|
-| **Waiting** | idle right after a deliberate / pull signal | shorter timer · slightly more prominent glow · pre-generate more readily |
-| **Thinking** | idle after flow/creation, may resume | longer timer · subtler glow · lazy-on-hover |
+| State | How inferred (frontend) | Timer / glow | Reveal threshold |
+|---|---|---|---|
+| **Waiting** | idle right after a deliberate / pull signal | shorter timer · more prominent glow | **low** — a glance/soft-hover or a short beat reveals (they asked; don't make them hover-hunt); pre-generate more readily |
+| **Thinking** | idle after flow/creation, may resume | longer timer · subtler glow | **high** — only a deliberate hover reveals; protect the flow |
 
-Cursor movement feeds this inference (dwell = soft focus) as a frontend-aggregated
+The per-action show-rule modulates on top: hovering an old ghost (case 24) always
+reveals (+ impact check); a node-move surfaces the glow but never auto-reveals.
+Cursor movement feeds state inference (dwell = soft focus) as a frontend-aggregated
 hint — never raw event streaming, and never itself a Trigger or discrete Show event.
 
 ## Curation as a rolling signal (answering "pair with time + prior actions?")
@@ -368,19 +413,26 @@ Defaults are pre-selected (marked ✅) so implementation can start; override any
 6. **Maturity gate weight** — ✅ DECIDED: full canvas content + LLM judgment +
    dedicated prompt (thinking:high). Cost mitigated by verdict-reuse via Impact Check.
 7. **Attention states** — ✅ DECIDED: two only (waiting / thinking); "away" dropped.
-8. **Glow-first** — ✅ DECIDED: universal for all ghosts; hover reveals.
-9. **Impact check on curation** — does move/delete "show" route through the impact
-   check too (a delete can invalidate a held ghost)? (Leaning: yes.)
-10. **Gate ↔ Orchestrator (foundation fork)** — does the gate's candidate set
-    subsume the Orchestrator's routing (thin selector picks top), or stay separate?
-11. **Phase transition policy (foundation fork)** — hysteresis threshold + does the
-    gate own the flip, or a dedicated phase step? What counts as a confident shift?
+8. **Glow-first** — ✅ DECIDED: glow-first *arrival*; reveal = f(state, show-rule).
+9. **Gate ↔ Orchestrator** — ✅ DECIDED: gate replaces it (single best); re-home
+   routing/tier/`question_style` per the table above.
+10. **Selection & dedup** — ✅ DECIDED: single best agent (no ranked set); dedup vs.
+    the full active rejection-insight set; tier-lock → upgrade offer, never substitute.
+11. **Impact check on curation** — does move/delete "show" route through the impact
+    check too (a delete can invalidate a held ghost)? (Leaning: yes.)
+12. **Local vs global phase** — adopt ephemeral **local** phase at the gate's locus
+    (coarse `session.current_phase` kept as dominant)? (Leaning: yes — re-divergence
+    falls out for free.)
+13. **Proactive Outer-Sub / Articulator** — enable their new gate-driven proactive
+    path in v1, or keep them explicit-edge-only and gate over Expander/Stress-Tester?
+14. **Phase hysteresis** — what counts as a confident shift (confidence threshold +
+    sustained over the window)?
 
 ## Task Breakdown
 - **task-01:** types (+ `context_snapshot`) + `intervention_offers` migration + RLS + `decideIntensity()`
-- **task-02:** phase transitions — wire `updatePhase()`, oscillating flip + hysteresis; verify Stress-Tester now reachable
-- **task-03:** Observer `runMaturityGate()` (full-canvas prompt, candidate set) + gate/phase-advance as pre-routing step
-- **task-04:** `src/streaming/offer.ts` + glow-first show model + `agent-pipeline` intensity branch + guard update
+- **task-02:** phase transitions — wire `updatePhase()`, oscillating flip + hysteresis, local phase at locus, backtrack carry-forward; verify Stress-Tester now reachable
+- **task-03:** Observer `runMaturityGate()` (full-canvas prompt, single-best pick) **replacing the Orchestrator** — re-home tier (upgrade-offer) + drop redundant `question_style`; retire orchestrator from `mastra.ts`
+- **task-04:** `src/streaming/offer.ts` + glow-first-arrival + reveal = f(state, show-rule) + `agent-pipeline` intensity branch + guard update
 - **task-05:** `intervention-materialize` pipeline + `intervention` route (pull/dismiss) + `src/index.ts` wiring
 - **task-06:** Impact Check (snapshot compare) — staleness warnings, withdraw-on-stale, gate verdict-reuse
 - **task-07:** receptivity + interaction-texture (curation-burst) signals → intensity/trigger; attention-state inference
