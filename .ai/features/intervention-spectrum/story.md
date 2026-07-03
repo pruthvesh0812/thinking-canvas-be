@@ -6,6 +6,10 @@ status: draft
 git_branch: "claude/ai-intervention-spectrum-moumhu"
 ---
 
+> **Design authority:** see [`DESIGN.md`](./DESIGN.md) for the full model, the
+> 24-action matrix, the phase/gate foundation, and the decisions log. This file is
+> the build plan (blast radius · files · migration · tasks).
+
 ## What
 Replace the binary AI-contribution model (full ghost pair **or** nothing) with a
 graduated **Intervention Spectrum** — a second consent gate, on *presentation*,
