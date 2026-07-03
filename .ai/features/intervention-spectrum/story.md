@@ -41,17 +41,25 @@ Two payoffs from one idea:
 
 ## The Spectrum
 
+**Glow-first is universal (decided).** Every ghost — anchored to a node — arrives
+as a glow (halo on the node + the ghost edge's endpoints); **hover reveals the
+full content.** Whether hover reveals instantly (content pre-generated) or
+generates on the spot (lazy) is invisible backend state. So the Show rungs are no
+longer "glow vs. full" — the glow is the universal arrival, hover the universal
+reveal. The rungs differ by *surface* and *headline*, not by whether content shows:
+
 | Level | User sees | Backend emits | Content generated? | Picked when |
 |---|---|---|---|---|
 | **0 · Hold** | nothing | nothing (offer row persisted only) | no | user in rapid flow; low-salience signal |
-| **1 · Ambient** | sidebar count / agent presence dot | `offer` (no anchor) | no | something waiting, not tied to current focus |
-| **2 · Anchored** | glow / halo on the node or edge | `offer` + `anchor_node_ids` | no | a specific node/edge has something; user busy |
-| **3 · Invitation** | toast / "hand-raise" beside focused node | `offer` + `headline` | no | user receptive-ish; cheap yes/no door |
-| **4 · Materialize** | full ghost pair streams in (today's behavior) | `spawn`→`chunk`→`done` | **yes** | explicit pull, or high salience + high receptivity |
+| **1 · Ambient** | sidebar count / dot · "processing" waveform | `offer` (no anchor) | no | something waiting or working, not tied to current focus |
+| **2 · Anchored glow** *(default)* | glow / halo on the node + ghost-edge ends | `offer` + `anchor_node_ids` | **lazy — on hover** | anything tied to a node |
+| **3 · Invitation** | glow **+ one-line headline** beside the node | `offer` + `headline` | no | worth naming the topic without forcing a hover |
+| **4 · Pre-generated** | glow with content ready *behind* it (zero hover latency) | `spawn`→`chunk`→`done` then held behind glow | **eager** | high confidence + user waiting |
 
-Levels 0–3 are doors, not deliveries. Level 4 is the *unchanged* current
-pipeline. The user can always escalate a lower level to 4 (pull) or close it
-(dismiss).
+**Lazy-on-hover is the default** (glow from the cheap gate decision → content
+generates on the hover the glow invites). Pre-generation (Level 4) is the special
+case for high-confidence + waiting. The user always escalates by hovering/pulling
+or de-escalates by dismissing.
 
 ## How intensity is decided
 
@@ -106,18 +114,62 @@ to a thing instead of the whole canvas.
 
 ## The Observer maturity & impact gate (new Observer job)
 
-Before any generation, the Observer runs a **maturity gate**: is the canvas
-mature enough that expanding / stress-testing / associating would *genuinely*
-augment, or should we wait for content to ripen? This is the fix for the
-"AI answered before the picture was complete" failure.
+Before any generation, the Observer runs a **maturity gate** with a **dedicated
+prompt**, over the **full canvas-map (complete node content, not summaries)**, on
+its strong model (thinking:high). Decided: the judgment is the **LLM's**, not a
+heuristic — because the preconditions below live in the actual *wording* of nodes,
+which summaries lose.
 
-- **Cost caveat:** the full Observer (gemini-2.5-flash + thinking:high +
-  canvas-map + tools) is too heavy to run before every trigger. Recommendation:
-  a lightweight **gate mode** — a cheap structured read over the canvas-map
-  *summaries* (same shape as Attunement) → `{ mature: bool,
-  augmentable_by: AgentRole[], impact: 'none' | 'material', reason }`. Keep the
-  heavy Observer for background + Session Complete. Same brain, cheap reflex.
-- The same gate serves the **impact check** below.
+**Foundation — maturity is per-agent and locus-specific, not a global score.**
+The gate does not ask "is the canvas mature?" (fuzzy, inconsistent). For each
+*eligible* agent it asks: "is there a specific place where this agent's move lands
+a genuine, in-range augmentation?" — and it must return **evidence** (which nodes,
+what is unexplored/untested/unconnected). No evidence → that agent fails. No agent
+passes → **hold** (not mature yet).
+
+| Agent | Eligible when | Evidence the gate must find | "Not mature" when |
+|---|---|---|---|
+| **Expander** | phase = diverging | a frontier node with a real unexplored direction 1–2 jumps ahead | dead-end · already densely branched · too sparse |
+| **Stress-Tester** | phase = converging | a committed claim with a gap / weak assumption / live contradiction | nothing committed yet · already well-defended |
+| **Outer Subconscious** | any (esp. question edge) | a concept with a strong non-obvious analog in a distant domain | purely local content, no cross-domain reach |
+| **Articulator** | edge between existing nodes | two existing nodes with a real but *unnamed* relationship | no such pair · relation already explicit |
+
+Output is a **candidate set**, not a boolean:
+`[{ agent, locus_node_ids, headroom, jump_distance, confidence }]` — phase-filtered,
+and **deduped against prior ghosts incl. rejected ones** (the gate must see
+rejection insights so it never re-offers a refusal). Empty set → hold.
+
+**Two open forks (the "foundation first, then proceed" items):**
+1. **Gate subsumes the Orchestrator?** It already decides who + where with more
+   context than the phase-rules. Cleanest: gate → candidate set → thin selector
+   (tier + `canAgentFire`) picks top; Orchestrator rules retire/fold in. Attunement
+   stays (supplies posture / `question_style`, orthogonal to headroom).
+2. **1–2 jump ownership:** gate does a *coarse* in-range filter; the content agent
+   enforces exact distance — don't pay the gate to be precise.
+
+**Cost:** full-canvas + thinking:high is the most expensive call and now runs on
+the hot path. Mitigation — the Impact Check gates the gate: **if nothing material
+changed since the last pass, reuse the prior verdict** instead of re-running.
+
+## Phase transitions (must be built — currently absent)
+
+**Finding (verified in code):** `sessions.current_phase` defaults to `'diverging'`
+(migration `…0001` L25) and **`updatePhase()` has zero call sites** — nothing ever
+writes it. Phase is frozen at `diverging` all session. Therefore Orchestrator
+rule 4 (`converging → stress_tester`) is **unreachable** — the Stress-Tester never
+fires via the main pipeline today, and `phase_shift_suggested` only nudges
+`question_style`, never the phase.
+
+We build transitions from zero — design for **oscillation**, not a one-way latch:
+- Phase is a both-ways state, flippable any number of times in a session.
+- The **maturity gate advances phase** as part of its pass (it already reads the
+  whole canvas + `phase_shift_suggested`, whose prompt computes shifts "or vice
+  versa"), then filters candidates by the *new* phase — detect + act in one shot.
+  Wire `updatePhase()` here.
+- **Hysteresis:** require a confident/sustained shift before flipping (don't
+  chatter on noise). A curation burst (see below) is a strong converging signal.
+- **Record transitions** — the click (diverge→converge) and re-divergence are what
+  the Observer + Session Complete care about; flip-count is a health signal.
 
 ## Context snapshot & staleness (Impact Check)
 
@@ -150,25 +202,40 @@ an ambient "processing" waveform along the canvas floor, with pause/resume):
   **processing** (working) vs. an offer glow (**has something**) — both belong on
   the Ambient rung of the spectrum.
 
-## Attention states → Show behaviour
+## Attention states (two only: waiting / thinking)
 
-| State | How inferred | Behaviour |
+Decided: only **waiting** and **thinking** (no "away"). Since glow-first is
+universal, these no longer switch *whether* we glow — they are a **receptivity
+input** to the timer + glow prominence:
+
+| State | How inferred (frontend) | Effect |
 |---|---|---|
-| **Waiting** | user idle after a deliberate/pull signal | reveal promptly |
-| **Thinking** | idle but actively returning to create | **glow-first, full on hover** (Anchored→Materialize) |
-| **Away** | frontend receptivity hint (long idle, cursor left canvas/tab) | generate + show by default |
+| **Waiting** | idle right after a deliberate / pull signal | shorter timer · slightly more prominent glow · pre-generate more readily |
+| **Thinking** | idle after flow/creation, may resume | longer timer · subtler glow · lazy-on-hover |
 
-"Away" is a frontend-**aggregated** receptivity hint, never raw event streaming.
-Cursor movement feeds this hint (dwell = soft focus; left-canvas = away) — it is
-never itself a Trigger or a discrete Show event.
+Cursor movement feeds this inference (dwell = soft focus) as a frontend-aggregated
+hint — never raw event streaming, and never itself a Trigger or discrete Show event.
+
+## Curation as a rolling signal (answering "pair with time + prior actions?")
+
+Yes — but **not** per-action rules. A single node-move mid-flow is incidental →
+show-only. Model an accumulated **interaction-texture** signal = f(recent action
+sequence, dwell/time): a *burst* of curation (several moves + a delete + dwell) =
+the user consolidating → a **converging signal** that legitimately **triggers**
+(run the gate; stress-tester likely eligible) *and* is a strong show moment. It is
+the action-texture sibling of Attunement's content-texture, and extends "Sequence
+as Data" from nodes to interactions. Frontend computes it; backend gets the
+aggregate. Threshold to pin down: promote to trigger when `curation actions ≥ N in
+window W` or `sustained dwell ≥ D`; below that, show-only.
 
 ## Blast Radius
 | Component | Impact |
 |---|---|
 | `types/index.ts` | New `InterventionIntensity`, `InterventionOffer`; extend `RedisMessage` union |
 | `src/lib/intervention.ts` | NEW — pure `decideIntensity()` + receptivity/salience scoring |
-| `src/agents/observer.ts` | Add a lightweight **gate mode** (`runMaturityGate()`) → `{ mature, augmentable_by, impact, reason }` over canvas-map summaries |
-| `src/pipeline/agent-pipeline.ts` | Trigger source changes (no longer `node.created`-driven); add maturity-gate step BEFORE routing; branch on intensity: low → offer + stop, Level 4 → spawn/stream |
+| `src/agents/observer.ts` | Add **gate mode** (`runMaturityGate()`) → candidate set `[{ agent, locus_node_ids, headroom, jump_distance, confidence }]`; dedicated prompt, **full canvas content** (not summaries), thinking:high; advances phase |
+| `src/db/sessions.ts` | Wire the existing-but-**dead** `updatePhase()` — called by the gate to flip phase (both directions) |
+| `src/pipeline/agent-pipeline.ts` | Trigger source changes (no longer `node.created`-driven); gate + phase-advance BEFORE routing; branch on intensity: low → offer + stop, pre-gen → spawn/stream |
 | `src/pipeline/intervention-materialize.ts` | NEW — immediate pipeline fired by a pull; runs content agent + streams (today's Steps 4–8) |
 | `src/streaming/offer.ts` | NEW — `buildOffer()` + `publishOffer()` / `publishWithdraw()` (mirror of `spawn.ts`) |
 | `src/db/intervention-offers.ts` | NEW — persist/read offer rows + status transitions |
@@ -277,10 +344,13 @@ DB write + receptivity update, no Inngest event needed.)
 - **Stale offers** — anchors the user has moved past are noise; withdraw promptly.
 - **Double-fire** — `decideIntensity` must run *after* `canAgentFire`, so a held
   offer blocks a new one on the same node.
-- **Gate cost** — the maturity/impact gate runs on the hot path; if it uses the
-  full thinking:high Observer it dominates latency + cost. Keep it lightweight.
-- **Timing split-brain** — if the timer moves to the frontend, backend and
-  frontend must not both try to own "when to fire." Pick one owner (see Q5).
+- **Gate cost** — decided as full-canvas + thinking:high, the most expensive call,
+  on the hot path. Mitigation is mandatory: the Impact Check reuses the prior
+  verdict when nothing material changed, so the gate doesn't re-run per tick.
+- **Timing split-brain** — timer is frontend-owned (decided); backend must NOT also
+  try to own "when to fire" — Inngest debounce is only a duplicate-collapse safety net.
+- **Stress-Tester regression latent today** — it's already unreachable (frozen
+  phase). Building phase transitions is what unlocks it; verify it actually fires.
 
 ## Open Questions
 Defaults are pre-selected (marked ✅) so implementation can start; override any.
@@ -293,20 +363,25 @@ Defaults are pre-selected (marked ✅) so implementation can start; override any
 4. **User preference lever** — add a global "interruption tolerance" setting
    (Do-Not-Disturb ↔ Proactive) now, or after the model proves out? It's the
    cleanest explicit "respect my boundaries" control.
-5. **Timer ownership** — ✅ frontend owns the visible attention-timer + pause/resume,
-   POSTs on expiry; backend owns maturity + generation (vs. backend streams ticks
-   over SSE).
-6. **Maturity gate weight** — ✅ lightweight Observer *gate mode* (vs. full
-   thinking:high Observer on every trigger).
-7. **Impact check on curation** — does move/delete "show" route through the impact
-   check too (a delete can invalidate a held ghost), or only ghost interactions as
-   the raw table implied? (Leaning: yes, route it through.)
+5. **Timer ownership** — ✅ DECIDED: frontend owns the visible attention-timer +
+   pause/resume, POSTs on expiry; backend owns maturity + generation.
+6. **Maturity gate weight** — ✅ DECIDED: full canvas content + LLM judgment +
+   dedicated prompt (thinking:high). Cost mitigated by verdict-reuse via Impact Check.
+7. **Attention states** — ✅ DECIDED: two only (waiting / thinking); "away" dropped.
+8. **Glow-first** — ✅ DECIDED: universal for all ghosts; hover reveals.
+9. **Impact check on curation** — does move/delete "show" route through the impact
+   check too (a delete can invalidate a held ghost)? (Leaning: yes.)
+10. **Gate ↔ Orchestrator (foundation fork)** — does the gate's candidate set
+    subsume the Orchestrator's routing (thin selector picks top), or stay separate?
+11. **Phase transition policy (foundation fork)** — hysteresis threshold + does the
+    gate own the flip, or a dedicated phase step? What counts as a confident shift?
 
 ## Task Breakdown
 - **task-01:** types (+ `context_snapshot`) + `intervention_offers` migration + RLS + `decideIntensity()`
-- **task-02:** Observer `runMaturityGate()` + wire the gate as the pre-routing step in `agent-pipeline`
-- **task-03:** `src/streaming/offer.ts` + `agent-pipeline` intensity branch + guard update
-- **task-04:** `intervention-materialize` pipeline + `intervention` route (pull/dismiss) + `src/index.ts` wiring
-- **task-05:** Impact Check (snapshot compare) + staleness warnings + withdraw-on-stale
-- **task-06:** receptivity feedback model (offer-response → intensity baseline) + attention-state inference
-- **task-07:** doc ratification via `update-ai-context` (CANVAS-SYNC.md + non-negotiable #9 + Observer's new gate role)
+- **task-02:** phase transitions — wire `updatePhase()`, oscillating flip + hysteresis; verify Stress-Tester now reachable
+- **task-03:** Observer `runMaturityGate()` (full-canvas prompt, candidate set) + gate/phase-advance as pre-routing step
+- **task-04:** `src/streaming/offer.ts` + glow-first show model + `agent-pipeline` intensity branch + guard update
+- **task-05:** `intervention-materialize` pipeline + `intervention` route (pull/dismiss) + `src/index.ts` wiring
+- **task-06:** Impact Check (snapshot compare) — staleness warnings, withdraw-on-stale, gate verdict-reuse
+- **task-07:** receptivity + interaction-texture (curation-burst) signals → intensity/trigger; attention-state inference
+- **task-08:** doc ratification via `update-ai-context` (CANVAS-SYNC.md + non-negotiable #9 + Observer's new gate role + phase model)
