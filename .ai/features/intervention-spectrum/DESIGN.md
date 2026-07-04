@@ -416,7 +416,9 @@ new **judge** role that retires the Orchestrator).
 - **Level set for v1** — which show/timer surfaces ship first.
 - **User "interruption tolerance" setting** (DND ↔ Proactive) now or later?
 - **Branching-from-any-node** (future) — flips the guard key to `branch`; may scope
-  the judge's canvas-map read to the subtree.
+  the judge's canvas-map read to the subtree. Captured as its own deferred story:
+  [`../branching/story.md`](../branching/story.md) (incl. the "start a branch from a
+  superseded response" popup).
 
 ---
 
