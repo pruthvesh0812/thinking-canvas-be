@@ -30,7 +30,7 @@ today — DESIGN.md §4c).
 | `types/index.ts` | `InterventionOffer` (+ `seq`, `context_snapshot`, `directness`, `status`); extend `RedisMessage` (`waiting`/`offer`/`withdraw`) |
 | `src/agents/orchestrator.ts` → **judge** | Repurpose into the judge: input Attunement + **full canvas-map**, one call → `{ mature, route, locus_node_ids, headroom, confidence }`; single best; dedup vs full rejection-insight set; tier→upgrade-offer (never substitute) |
 | `src/agents/observer.ts` | **Reverts to content agent only** — the earlier "gate mode" idea is dropped (the judge holds maturity now) |
-| `src/db/sessions.ts` | Wire the dead `updatePhase()` (local/oscillating phase); add `latest_seq` for the version guard |
+| `src/db/sessions.ts` | Wire the dead `updatePhase()` (v1: one-way `diverging→converging` latch + hysteresis); add `latest_seq` for the version guard |
 | `src/pipeline/agent-pipeline.ts` | Restructure to: judge → publish `waiting` → `step.waitForEvent` (+timeout) → re-judge-if-changed → generate/stream → publish show. Version guard at the publish boundary |
 | `src/lib/intervention.ts` | NEW — show-ruleset `directness = f(state, show-rule)` + the receptivity model |
 | `src/streaming/offer.ts` | NEW — `publishWaiting()` / `publishOffer()` / `publishWithdraw()` (mirror of `spawn.ts`) |
@@ -104,7 +104,7 @@ Yes.
 
 ## Task Breakdown
 - **task-01:** types (+ `seq`/`context_snapshot`/`directness`) + `intervention_offers` migration + `sessions.latest_seq` + RLS
-- **task-02:** phase transitions — wire `updatePhase()`, local/oscillating + hysteresis, backtrack carry-forward; verify Stress-Tester reachable
+- **task-02:** phase transition — wire `updatePhase()` (v1: one-way `diverging→converging` latch + hysteresis); verify Stress-Tester reachable
 - **task-03:** the **judge** (repurpose `orchestrator.ts`): canvas-map input, maturity + single-best, tier upgrade-offer; retire Orchestrator from `mastra.ts`; Observer→content-only
 - **task-04:** handshake — `agent-pipeline` restructure (`waiting` → `waitForEvent` → re-judge-if-changed → generate) + `src/streaming/offer.ts` + `intervention` route
 - **task-05:** concurrency — `seq`/`latest_seq`, supersession + version guard in `guards.ts` + publish-boundary check

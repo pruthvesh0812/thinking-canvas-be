@@ -179,14 +179,14 @@ not mature → hold. Preconditions from `src/agents/*.ts`:
 
 | Agent | Eligible when | Evidence the judge must find | "Not mature" when |
 |---|---|---|---|
-| **Expander** | local phase = diverging | a trail with momentum **and** open space 1–2 jumps ahead along it | isolated node (no trail) · direction exhausted · already densely branched |
-| **Stress-Tester** | local phase = converging | a committed subtree with ≥1 attackable surface: contradiction / hidden assumption / scope gap / dependency risk | nothing committed (pure diverge) · no attackable surface |
+| **Expander** | phase = diverging | a trail with momentum **and** open space 1–2 jumps ahead along it | isolated node (no trail) · direction exhausted · already densely branched |
+| **Stress-Tester** | phase = converging | a committed subtree with ≥1 attackable surface: contradiction / hidden assumption / scope gap / dependency risk | nothing committed (pure diverge) · no attackable surface |
 | **Outer Subconscious** | any phase | a concept with a strong non-obvious analog — **cross- OR intra-domain** | purely literal/local content, no associative lift |
 | **Articulator** | any phase | two existing nodes with a real but *unnamed* relationship (2–3 readings, no question node) | no such pair · link already labeled |
 
 - **Single best agent** (never a ranked set — we don't dilute help). {Expander,
-  Stress-Tester} chosen by *local* phase; Outer-Sub / Articulator are phase-agnostic
-  and can outrank both on stronger evidence.
+  Stress-Tester} chosen by `session.current_phase`; Outer-Sub / Articulator are
+  phase-agnostic and can outrank both on stronger evidence.
 - **Dedup vs. the FULL active rejection-insight set** — never re-offer a refusal.
 - **1–2 jump:** coarse in-range filter here; the content agent enforces exact distance.
 - **Tier:** pick the genuine best; if it is tier-locked, **do not substitute a
@@ -203,37 +203,30 @@ not mature → hold. Preconditions from `src/agents/*.ts`:
   candidates they can be offered *without* an explicit edge (needs the judge to
   supply the node + an intra/cross hint, or the two node ids).
 
-### 4c. Phase model
+### 4c. Phase model (v1 = one-way arc)
+
+**v1 scope:** the arc is **diverge → transition → converge**, one way only.
+Re-divergence, local (per-frontier) phase, and oscillation are **deferred** — they
+arrive with branching (the "parallel branch" case), captured in
+[`../branching/story.md`](../branching/story.md).
 
 **Finding (verified in code):** `sessions.current_phase` defaults to `'diverging'`
-(migration `…0001` L25) and **`updatePhase()` has zero call sites** — nothing ever
-writes it. Phase is frozen at `diverging` all session ⇒ the old Orchestrator rule
-(`converging → stress_tester`) was **unreachable**: the **Stress-Tester never fires**
-via the main pipeline today. We build transitions from zero.
+(migration `…0001` L25) and **`updatePhase()` has zero call sites** — nothing writes
+it, so phase is frozen at `diverging` and the Stress-Tester (which needs
+`converging`) **never fires** today. v1 fixes exactly this:
 
-**Re-divergence has four reasons** — and the reason decides the AI response:
+- Phase is a **single latch**: `diverging → converging`, once, driven by
+  Attunement's `phase_shift_suggested` (its prompt already reads the shift — and the
+  "transition" is that in-flight moment) via `updatePhase()`.
+- **Hysteresis:** require a confident/sustained shift before flipping so it doesn't
+  chatter. Once converged, it stays converged for the session (no going back in v1).
+- The **judge** reads `session.current_phase` to gate {Expander (diverging),
+  Stress-Tester (converging)}; Outer-Sub / Articulator are phase-agnostic.
 
-| Reason | What happened | AI response |
-|---|---|---|
-| **Checkpoint descent** | converged on X; X is a settled base; explore options *from* X | Expander on X's children — healthy recursion |
-| **Backtrack** | a stress-test broke the converged idea → reopen the *same* level | Expander that **carries the breaking insight** forward |
-| **Reframe** | new dimension reopens the space | Expander a level up; Observer may flag drift |
-| **Parallel branch** | attention moved to a different, still-open region | not "re"-divergence at all |
-
-The last row is the tell: on a spatial graph, **phase is a property of the current
-frontier, not the whole session** (one cluster can be converged while another is
-open). So:
-
-- Keep `session.current_phase` as a cheap **coarse/dominant** phase.
-- The **judge computes an ephemeral LOCAL phase** at its chosen locus and picks
-  Expander-vs-Stress-Tester on *that*; it advances phase via `updatePhase()` when
-  the dominant read shifts.
-- Design for **oscillation**, not a one-way latch; apply **hysteresis** (a
-  confident/sustained shift before flipping — a curation burst is a strong
-  converging signal); **record transitions** (the click + re-divergence matter to
-  the Observer + Session Complete; flip-count is a health signal).
-- Re-divergence then needs **no special detector** — it emerges when the frontier
-  moves to a reopening region. Only **backtrack** needs explicit carry-forward.
+> **Deferred (future, with branching):** re-divergence has four distinct reasons —
+> checkpoint descent, backtrack, reframe, parallel branch — and handling them cleanly
+> means making phase **local to the frontier** rather than session-global (one
+> cluster converged while another is still open). That is a branching-era change.
 
 ### 4d. The handshake: decide → wait → generate
 
@@ -275,6 +268,29 @@ single frontier): **single-flight per session** + a **monotonic version guard**:
   now, key = `branch/subtree` when branching-from-any-node lands (then concurrent
   pipelines on *different* branches coexist; only same-branch collides). A key swap,
   not a redesign.
+
+### 4f. `InterventionOffer` — the lifecycle spine
+
+The judge does **not** return an `InterventionOffer`. It returns a *decision*
+(`{ mature, route, locus_node_ids, headroom, confidence }`); when `mature`, the
+**pipeline builds + persists** the offer from it, emits `waiting` (carrying a
+subset), then parks. The offer is the persisted handle (`intervention_offers`) every
+later step references by `id`/`seq`:
+
+| Step | Offer |
+|---|---|
+| judge → `mature` | **created**: `agent_role=route`, `anchor_node_ids=locus`, `seq` (bumps `sessions.latest_seq`), `context_snapshot`, `status='waiting'`; `headline`/`directness` null |
+| publish `waiting` (SSE) | payload = subset (`id`, anchor, agent, timer params) — no content yet |
+| parked wait | source of truth for "in flight" — supersession + `canAgentFire` read/write it |
+| process/go | wake; `context_snapshot`≠current → re-judge; guard checks `seq==latest_seq` before publish |
+| generation | build `SpawnDescriptor` (existing) referencing `offer.id`; stream |
+| done → show | set `directness` (show ruleset) + backend `headline`; `status='shown'`; publish `offer`/`spawn…done` |
+| user acts | `status → pulled/dismissed/superseded/expired`; dismiss/defer → receptivity model (§8) |
+
+Relationship to existing types: `SpawnDescriptor` (unchanged) = the ghost graph,
+built only at generation; `GhostPair` (unchanged) = the post-generation thread
+record for accept/reject; `offer.id` links all three. `headline`/`directness` are
+filled at *show* (they need the generated content + the attention state then).
 
 ---
 
@@ -403,8 +419,9 @@ new **judge** role that retires the Orchestrator).
 - **Show model:** 2×2 **directness × in-view** → glow (hi/lo) or sidebar card;
   backend supplies the headline; glow-first *arrival*.
 - **Attention states:** two only — waiting / thinking (no "away").
-- **Phase:** local to the frontier (coarse session phase kept); oscillating +
-  hysteretic; only **backtrack** carries insight forward.
+- **Phase (v1):** one-way `diverging → converging` **single latch** + hysteresis
+  (session-level). Re-divergence + local/per-frontier phase + oscillation **deferred**
+  to branching.
 - **Curation** = rolling interaction-texture signal (not per-action).
 - **Learning:** offer-response ≠ content-rejection (separate receptivity model).
 - **Redis protocol** generalized (`waiting`/`offer`/`withdraw`) — pending ratification.
