@@ -4,7 +4,7 @@ type: design
 created: 2026-07-03
 status: draft
 git_branch: "claude/ai-intervention-spectrum-moumhu"
-supersedes_when_ratified: "CLAUDE.md non-negotiable #9 · CANVAS-SYNC.md · Observer role in CORE-CONCEPTS.md"
+supersedes_when_ratified: "CLAUDE.md non-negotiable #9 · CANVAS-SYNC.md · Orchestrator + Observer roles in CORE-CONCEPTS.md/AGENT-PIPELINE.md"
 ---
 
 # AI Intervention Spectrum — Design
@@ -15,8 +15,8 @@ supersedes_when_ratified: "CLAUDE.md non-negotiable #9 · CANVAS-SYNC.md · Obse
 **One line:** replace the binary AI-contribution model (full ghost pair **or**
 nothing) with a graduated, boundary-respecting system that decides *whether to
 generate* (Trigger) and *how loudly to present it* (Show) as two separate axes,
-gated by an Observer maturity check, so the AI helps at the right moment without
-ever barging into the user's flow.
+with a **decide → wait → generate** handshake so the backend never spends a
+content-agent token until the user lets a visible timer lapse or approves.
 
 ---
 
@@ -56,18 +56,39 @@ Almost every case below dissolves once these are separated:
 - **Trigger** = *should the AI generate?* (spend tokens, produce a response)
 - **Show** = *should an existing response be revealed?* (surface what's held)
 
-A response can be generated-and-held (glow only), then revealed later by a pure
-Show event that generates nothing new.
+### The augmentation pipeline (decide → wait → generate → show)
 
-### The augmentation pipeline
+Two backend phases, with the user's consent-timer *between* the decision and
+generation:
 
 ```
-Attention timer ──► Maturity gate ──► Generate & HOLD ──► Show ──► Reveal
- (frontend-owned,     (Observer:        (single best      (glow    (hover /
-  visible, pausable)   who + where +     agent streams,    first)   state ×
-                       phase, full        held behind             show-rule)
-                       canvas)            a glow)
+  canvas event
+       │
+  ┌────▼──────────────┐   false → defer to next event
+  │ 1. TRIGGER ruleset │   attention/action gate — FRONTEND; NOT maturity
+  └────┬──────────────┘
+       │ true → POST
+  ┌────▼──────────────────────────┐   not mature → silent "no pipeline"
+  │ 2. Attunement + JUDGE          │   new Orchestrator: canvas-map → {mature, route}
+  └────┬──────────────────────────┘
+       │ mature → push "mature + pipeline waiting" over SSE; park on waitForEvent
+  ┌────▼──────────────┐
+  │ 3. PROCESSING timer│   FRONTEND shows it (default). User may pause/defer,
+  │    (the consent)   │   hit "process now", or let it lapse
+  └────┬──────────────┘
+       │ go / lapse → (re-judge if context changed — §4d)
+  ┌────▼──────────────┐
+  │ 4. GENERATE        │   the parked single-best agent streams
+  └────┬──────────────┘
+       │ response
+  ┌────▼──────────────┐
+  │ 5. SHOW ruleset    │   directly vs subtly  ×  anchor in-view vs off-screen
+  └───────────────────┘        → glow (hi/lo) or sidebar card (§5)
 ```
+
+The judge (phase 2) is **eager** — so the timer only appears when something is
+genuinely coming; **generation (phase 4) is lazy** — only after the user lets the
+timer lapse or approves.
 
 ### Action taxonomy — class decides Trigger/Show (not the specific action)
 
@@ -80,9 +101,10 @@ Attention timer ──► Maturity gate ──► Generate & HOLD ──► Show
 
 \* a *burst* of curation promotes to a Trigger — see §7.
 
-**Consequence:** generation is **no longer driven by `canvas/node.created`.**
-Creation events only feed context and reset the attention timer; the real trigger
-is *timer-expiry + maturity gate* (or a deliberate/pull signal).
+**Consequence:** generation is **no longer driven by `canvas/node.created`.** The
+**trigger ruleset** (not creation events) decides whether to invoke the judge;
+generation happens only after the processing timer. Creation events feed context
+and reset the timer.
 
 ---
 
@@ -105,8 +127,8 @@ per §2. Ghost-interaction rows (12–15, 24) run the **Impact Check** (§6).
 | 10 | sticky-note moving | deliberate | yes | yes | |
 | 11 | sticky-note deletion | deliberate | yes | yes | |
 | 12 | accept an OLD ghost node | ghost | see sub-cases | yes | ↓ |
-| 12.1 | · no current processing | | if gate says yes | no | run the maturity gate; trigger only if it passes |
-| 12.2 | · processing timer showing | | re-trigger | yes | pause the timer; if gate yes → re-trigger with new context, else re-trigger existing |
+| 12.1 | · no current processing | | if judge says mature | no | run the judge; trigger only if it passes |
+| 12.2 | · processing timer showing | | re-trigger | yes | pause the timer; if judge says mature → re-trigger with new context, else re-trigger existing |
 | 12.3 | · processing already started | | let it finish | yes (+warn if impact) | Impact Check: no impact → let the ghost land; impact → land it **with a warning** ("this may not capture the node you just accepted — regenerate?") |
 | 13 | reject an old ghost node | ghost | as 12 (reject) | yes | same three sub-cases |
 | 14 | accept a ghost edge (observer) | ghost | as 12 | yes | |
@@ -127,86 +149,67 @@ thing instead of the whole canvas.
 
 ---
 
-## 4. Trigger axis
+## 4. Trigger axis — decide, then wait, then generate
 
-### 4a. The interactive deferral timer (frontend-owned — decided)
+### 4a. The trigger ruleset (frontend — the cheap gate)
 
-Today's debounce is an invisible, fixed 10s Inngest timer. This makes it visible +
-user-controlled, matching the UI concept (a circular countdown + an ambient
-"processing" waveform along the canvas floor, with pause/resume):
+The attention/action gate that decides whether to invoke the (expensive) judge —
+**not** a maturity check (that is the judge's job, §4b). Runs **frontend-side** on
+each canvas event from: the action **class** (§2 taxonomy) + the **deferral timer**
++ the rolling **interaction-texture** signal (§7). True → POST to the backend;
+false → defer to the next event. Because maturity is excluded, the backend judge
+only ever runs on a genuine attention signal.
 
-- **Adaptive period:** default 10s; **5s on HIGH readiness**; reset to 5s on manual
-  defer (pause then resume creating); back to 10s after a response lands.
-- **Ownership:** the **frontend owns the visible attention-timer** (idle detection,
-  countdown, pause/resume are local + responsive) and POSTs the trigger on expiry;
-  the **backend owns maturity + generation**. The Inngest debounce demotes to a
-  duplicate-collapse safety net. Backend must NOT also own "when to fire."
-- The ambient waveform is a low-intensity surface with two states: **processing**
-  (working) vs. an offer glow (**has something**).
+### 4b. The judge (the "new Orchestrator") — maturity + routing in one call
 
-### 4b. The Observer maturity & impact gate (the heart of the Trigger axis)
+The judge **replaces the old Orchestrator** and **absorbs the maturity check**.
+Input: Attunement's output + the **full canvas-map (complete node content, not
+summaries)**. Model: strong (thinking:high). One call, one output:
+`{ mature, route?, locus_node_ids?, headroom?, confidence? }`. The judgment is the
+**LLM's** — the preconditions live in the *wording* of nodes, which summaries lose.
 
-Before any generation, the Observer runs a **maturity gate** with a **dedicated
-prompt**, over the **full canvas-map (complete node content, not summaries)**, on
-its strong model (thinking:high). The judgment is the **LLM's** — because the
-preconditions live in the actual *wording* of nodes, which summaries lose.
+> This supersedes the earlier "Observer gate-mode" idea. The **Observer reverts to
+> a content agent only**; the **judge** holds the canvas-map + maturity + routing
+> role. (Attunement still runs first and supplies posture.)
 
-**Foundation: maturity is per-agent and locus-specific, not a global score.** For
-each eligible agent it asks "is there a specific place where this agent's move
-lands a genuine, in-range augmentation?" and must return **evidence** (which
-nodes, what is unexplored/untested/unconnected). No evidence → that agent fails.
-No agent passes → **hold** (not mature yet). Preconditions from `src/agents/*.ts`:
+**Maturity is per-agent and locus-specific, not a global score.** For each eligible
+agent the judge asks "is there a specific place where this agent's move lands a
+genuine, in-range augmentation?" and must return **evidence**. No agent passes →
+not mature → hold. Preconditions from `src/agents/*.ts`:
 
-| Agent | Eligible when | Evidence the gate must find | "Not mature" when |
+| Agent | Eligible when | Evidence the judge must find | "Not mature" when |
 |---|---|---|---|
 | **Expander** | local phase = diverging | a trail with momentum **and** open space 1–2 jumps ahead along it | isolated node (no trail) · direction exhausted · already densely branched |
 | **Stress-Tester** | local phase = converging | a committed subtree with ≥1 attackable surface: contradiction / hidden assumption / scope gap / dependency risk | nothing committed (pure diverge) · no attackable surface |
 | **Outer Subconscious** | any phase | a concept with a strong non-obvious analog — **cross- OR intra-domain** | purely literal/local content, no associative lift |
 | **Articulator** | any phase | two existing nodes with a real but *unnamed* relationship (2–3 readings, no question node) | no such pair · link already labeled |
 
-- **Selection: single best agent** (decided — never a ranked set; we don't dilute
-  help). Within {Expander, Stress-Tester} the pick is by *local* phase; Outer-Sub /
-  Articulator are phase-agnostic and can outrank both on stronger evidence.
-- **Dedup vs. the FULL active rejection-insight set** (decided) — never re-offer a
-  refusal.
-- Output: `{ agent, locus_node_ids, headroom, jump_distance, confidence }`.
-- **1–2 jump ownership:** gate does a *coarse* in-range filter; the content agent
-  enforces exact distance.
-- **Cost mitigation (mandatory):** full-canvas + thinking:high is the most
-  expensive call and runs on the hot path. The Impact Check gates the gate — **if
-  nothing material changed since the last pass, reuse the prior verdict** instead
-  of re-running.
-
-**New proactive path for Outer-Sub & Articulator.** Today they fire ONLY on
-explicit edges, via immediate pipelines that bypass the Orchestrator. Making them
-gate candidates lets the gate *proactively* offer an associative leap or articulate
-an undrawn link — more help, but new anchoring (proactive Outer-Sub needs the node
-+ an intra/cross hint; proactive Articulator needs the two node ids). **[OPEN — see
-§10]**
-
-#### The gate replaces the Orchestrator (decided) — re-homing
-
-Only the main pipeline consumes the Orchestrator's routing. Retiring it:
-
-| Orchestrator did… | Re-homed to |
-|---|---|
-| **route** (which agent) | the gate (single best) |
-| **tier enforcement** (`getAvailableAgents`) | gate selection — but **never substitute a weaker agent**. If the best pick is tier-locked, surface a low-intensity **upgrade offer** ("Stress-Tester could help here — Pro"). Substituting Stress-Tester→Expander for a converging user is *actively wrong* (Expander re-diverges, which the Stress-Tester prompt forbids). Preserves help quality + is a conversion surface |
-| **`question_style`** | already sourced from Attunement via the serializer (agents read the ATTUNEMENT block; the Orchestrator's copy is only logged) — drops cleanly |
-| registered in `src/mastra.ts` (tracing) | swap for the gate agent |
-
-Immediate pipelines (articulator/outer-sub explicit-edge triggers) never used the
-Orchestrator → untouched. **Attunement stays** — it supplies posture
-(`question_style`), orthogonal to the gate's headroom judgment.
+- **Single best agent** (never a ranked set — we don't dilute help). {Expander,
+  Stress-Tester} chosen by *local* phase; Outer-Sub / Articulator are phase-agnostic
+  and can outrank both on stronger evidence.
+- **Dedup vs. the FULL active rejection-insight set** — never re-offer a refusal.
+- **1–2 jump:** coarse in-range filter here; the content agent enforces exact distance.
+- **Tier:** pick the genuine best; if it is tier-locked, **do not substitute a
+  weaker agent** (Stress-Tester→Expander for a converging user is *actively wrong* —
+  Expander re-diverges, which the Stress-Tester prompt forbids). Emit an **upgrade
+  offer** for the sidebar card instead (§5) — preserves help quality + is a
+  conversion surface.
+- **Retiring the Orchestrator:** routing → the judge; `getAvailableAgents` → the
+  tier rule above; `question_style` already comes from Attunement via the serializer
+  (the Orchestrator's copy was only logged); swap the `src/mastra.ts` registration.
+  The immediate articulator/outer-sub **edge** pipelines never used the Orchestrator
+  → untouched.
+- **New proactive path for Outer-Sub & Articulator [OPEN — §10]:** as judge
+  candidates they can be offered *without* an explicit edge (needs the judge to
+  supply the node + an intra/cross hint, or the two node ids).
 
 ### 4c. Phase model
 
 **Finding (verified in code):** `sessions.current_phase` defaults to `'diverging'`
 (migration `…0001` L25) and **`updatePhase()` has zero call sites** — nothing ever
-writes it. Phase is frozen at `diverging` all session ⇒ Orchestrator rule 4
-(`converging → stress_tester`) is **unreachable**: the **Stress-Tester never fires**
-via the main pipeline today, and `phase_shift_suggested` only nudges
-`question_style`, never the phase. We build transitions from zero.
+writes it. Phase is frozen at `diverging` all session ⇒ the old Orchestrator rule
+(`converging → stress_tester`) was **unreachable**: the **Stress-Tester never fires**
+via the main pipeline today. We build transitions from zero.
 
 **Re-divergence has four reasons** — and the reason decides the AI response:
 
@@ -222,64 +225,103 @@ frontier, not the whole session** (one cluster can be converged while another is
 open). So:
 
 - Keep `session.current_phase` as a cheap **coarse/dominant** phase.
-- The **gate computes an ephemeral LOCAL phase** at its chosen locus and picks
+- The **judge computes an ephemeral LOCAL phase** at its chosen locus and picks
   Expander-vs-Stress-Tester on *that*; it advances phase via `updatePhase()` when
   the dominant read shifts.
-- Design for **oscillation**, not a one-way latch; apply **hysteresis** (require a
+- Design for **oscillation**, not a one-way latch; apply **hysteresis** (a
   confident/sustained shift before flipping — a curation burst is a strong
-  converging signal); **record transitions** (the click + re-divergence are what
-  the Observer and Session Complete care about; flip-count is a health signal).
+  converging signal); **record transitions** (the click + re-divergence matter to
+  the Observer + Session Complete; flip-count is a health signal).
 - Re-divergence then needs **no special detector** — it emerges when the frontier
   moves to a reopening region. Only **backtrack** needs explicit carry-forward.
 
+### 4d. The handshake: decide → wait → generate
+
+1. Judge says **mature** → backend pushes a **`mature + pipeline waiting`** message
+   **over SSE** (async — decided; not a synchronous HTTP body), and the Inngest run
+   **parks on `step.waitForEvent`** (with a hard **timeout** so an abandoned tab
+   never leaves a run parked forever).
+2. The frontend shows the **processing timer** (shown by **default** — decided).
+   The user can **pause/defer**, hit **"process now"** (a *waiting* user skips
+   straight ahead), or let it **lapse** — any of which POSTs the go/defer event.
+   Timer period: default 10s; 5s on high readiness; reset on manual defer; back to
+   10s after a response. The ambient "processing" waveform is the low-key surface
+   for this phase.
+3. On go/lapse the parked run wakes and **generates** (the single-best agent
+   streams). Judge said **not mature** → silent "no pipeline"; nothing is shown.
+4. **Re-judge on change (decided):** the judge stamped its decision with a
+   **context snapshot**. At wake: snapshot unchanged → generate with the cached
+   route; **changed materially** (user added nodes during the wait) → re-run
+   Attunement + judge, or **abort + `withdraw`** if no longer mature. The timer thus
+   doubles as the "let them finish" window *and* keeps the decision honest.
+
+### 4e. Concurrency & stale ordering — single-flight + version guard
+
+The long "waiting" phase means a newer trigger can arrive mid-wait. Freshest
+context must always win (an earlier judge saw *less* canvas). For now (single-user,
+single frontier): **single-flight per session** + a **monotonic version guard**:
+
+- Each intervention gets a per-session **`seq`**; the session tracks **`latest_seq`**.
+- **Supersession (common case):** a new mature judgement bumps `latest_seq`, marks
+  the parked one `superseded`, publishes **`withdraw`**, cancels the parked run.
+- **Version guard (handles the race):** cancellation always races — the stale run
+  may already be generating. So every run **re-checks it is still `latest` at the
+  publish boundary** (before `spawn`, before streaming); a newer `seq` → **abort
+  silently**. *This is the answer to "the stale pipe finishes after the fresh one":
+  it wakes, sees it lost, drops.*
+- **Frontend idempotency:** ghosts keyed by `(anchor_node_id, seq)` — a late stale
+  message for an older seq is ignored.
+- **Forward-compatible:** the guard is "latest seq **per key**" — key = `session`
+  now, key = `branch/subtree` when branching-from-any-node lands (then concurrent
+  pipelines on *different* branches coexist; only same-branch collides). A key swap,
+  not a redesign.
+
 ---
 
-## 5. Show axis
+## 5. Show axis — the show ruleset
 
-### 5a. The spectrum (Show levels)
+After generation, a **show ruleset** decides how subtly to surface the result —
+**show directly vs. show subtly**, crossed with the frontend fact **anchor in the
+viewport vs. off-screen**. Glow-first *arrival* holds: nothing barges in
+fully-formed; hover reveals.
 
-| Level | User sees | Backend emits | Content generated? |
-|---|---|---|---|
-| **Hold** | nothing | offer row persisted only | no |
-| **Ambient** | sidebar count/dot · "processing" waveform | `offer` (no anchor) | no |
-| **Anchored glow** *(default)* | glow/halo on node + ghost-edge ends | `offer` + `anchor_node_ids` | lazy — on reveal |
-| **Invitation** | glow **+ one-line headline** | `offer` + `headline` | no |
-| **Pre-generated** | glow with content ready behind it (zero reveal latency) | `spawn`→`chunk`→`done`, held behind glow | eager |
+| | Anchor **in view** | Anchor **off-screen** |
+|---|---|---|
+| **Show directly** | high-intensity glow (node + ghost-edge ends) | normal toast/card in the sidebar |
+| **Show subtly** | low-intensity glow | low-intensity sidebar card |
 
-**Lazy-on-reveal is the default** (glow from the cheap gate decision → content
-generates on the reveal it invites). Pre-generation is the special case for high
-confidence + a waiting user.
-
-### 5b. Glow-first *arrival* + reveal threshold (decided)
-
-Every ghost **arrives** as a glow — it never barges in fully-formed. The **reveal**
-is gated by `f(attention state, the action's show-rule)`. Whether reveal is instant
-(pre-generated) or generates on the spot (lazy) is invisible backend state.
-
-### 5c. Attention states (two only) × show rules
-
-| State | Inferred (frontend) | Timer / glow | Reveal threshold |
-|---|---|---|---|
-| **Waiting** | idle right after a deliberate / pull signal | shorter timer · more prominent glow | **low** — a glance/soft-hover or short beat reveals; pre-generate more readily |
-| **Thinking** | idle after flow/creation, may resume | longer timer · subtler glow | **high** — only a deliberate hover reveals; protect the flow |
-
-The per-action show-rule modulates on top: hovering an old ghost (24) always
-reveals (+ Impact Check); a node-move (5) surfaces the glow but never auto-reveals.
-("Away" is dropped — two states only.)
+- **Split:** the **backend** emits the result + `{ directness, anchor_node_ids,
+  headline }`; the **frontend** picks glow-vs-card from viewport position and renders
+  the intensity.
+- **Sidebar card:** clicking it **pans the view to the anchor**, which then glows.
+  The card carries a plain-language **headline the backend supplies** (only it knows
+  what the agent produced) — e.g. *"Worth a look when you're free — I found a
+  tension between this node and an earlier one."* A **tier-locked** pick surfaces its
+  upgrade offer here.
+- **Directness = f(attention state, action's show-rule).** Two states only
+  (decided): **waiting** → directly (they asked; a waiting user can also "process
+  now" up-front); **thinking** → subtly (protect the flow). The per-action show-rule
+  modulates: hovering an old ghost (24) always reveals (+ Impact Check); a node-move
+  (5) surfaces the glow but never auto-reveals. ("Away" is dropped.)
 
 ---
 
 ## 6. Context snapshot & staleness (the Impact Check)
 
-Every ghost is generated against a **context snapshot** and the canvas then moves
-on. On any context-changing action (accept/reject an old ghost, delete a
-depended-on node, hover an old ghost), the Observer's impact check classifies the
-change: `none` → show as-is; `material` → show-with-warning ("may not capture your
-latest change — regenerate?") or re-trigger. This unifies matrix cases 2, 7–8,
-12–15, 24, and generalizes the existing "2 new nodes without interaction → ignored"
-rule into a real staleness model. Each offer/ghost records the snapshot it was born
-from (a context hash or trigger node-sequence index). The Impact Check also gates
-the gate (verdict reuse — §4b).
+Every offer/ghost is stamped with the **context snapshot** it was born from (a
+context hash or trigger node-sequence index). Two jobs use it:
+
+1. **Wake-time re-judge (§4d):** at generation, unchanged snapshot → cached route;
+   material change → re-judge or abort+withdraw.
+2. **Ghost-interaction impact (matrix 12–15, 24):** on accept/reject/hover of an
+   existing ghost, or a delete of a depended-on node, the judge classifies the
+   change — `none` → show as-is; `material` → show-with-warning ("may not capture
+   your latest change — regenerate?") or re-trigger.
+
+This generalizes the existing "2 new nodes without interaction → ignored" rule into
+a real staleness model, and it is what powers the version guard's "is this still
+current" check (§4e). It also caps judge cost: **unchanged snapshot ⇒ reuse the
+prior verdict** instead of re-running.
 
 ---
 
@@ -288,23 +330,24 @@ the gate (verdict reuse — §4b).
 Not per-action rules. A single node-move mid-flow is incidental → show-only. Model
 an accumulated **interaction-texture** signal = f(recent action sequence,
 dwell/time): a *burst* of curation (several moves + a delete + dwell) = the user
-consolidating → a **converging signal** that legitimately **triggers** (run the
-gate; Stress-Tester likely eligible) *and* is a strong show moment. It is the
+consolidating → a **converging signal** that legitimately **triggers** (invoke the
+judge; Stress-Tester likely eligible) *and* is a strong show moment. It is the
 action-texture sibling of Attunement's content-texture, and extends "Sequence as
-Data" from nodes to interactions. Frontend computes it; backend gets the aggregate.
-Threshold to pin down: promote to trigger when `curation actions ≥ N in window W`
-or `sustained dwell ≥ D`.
+Data" from nodes to interactions. Frontend computes it (it feeds the trigger
+ruleset, §4a); backend gets the aggregate. Threshold to pin down: promote to
+trigger when `curation actions ≥ N in window W` or `sustained dwell ≥ D`.
 
 ---
 
 ## 8. The learning loop — and the trap to avoid
 
 The offer-response is a new learning signal and the seed of the v1.5 **Cognitive
-Profile**. **But ignoring an offer ≠ rejecting content.** An ignored glow means
-"not now / I'm busy," NOT "that idea was bad." So:
+Profile**. **But ignoring/deferring an offer ≠ rejecting content.** A deferred timer
+or ignored glow means "not now / I'm busy," NOT "that idea was bad." So:
 
-- **Offer-response** (pulled / dismissed / ignored) → a separate **receptivity
-  model** that down/up-ranks future intensity. **No `rejection_insights` rows.**
+- **Offer-response** (deferred / dismissed / ignored / "process now") → a separate
+  **receptivity model** that down/up-ranks future intensity + timer length. **No
+  `rejection_insights` rows.**
 - **Content accept/reject** (on a materialized ghost) → feeds Rejection Insights
   exactly as today, unchanged.
 
@@ -315,24 +358,25 @@ Keeping these two channels clean is the subtle correctness point of the feature.
 ## 9. Streaming protocol amendment (needs ratification)
 
 This touches a **non-negotiable**: CLAUDE.md #8 ("backend never pushes unsolicited
-state") and #9 ("Redis pub/sub = ghost node streaming **only**"). The new
-sub-materialize signals are strictly *less* intrusive than a ghost (advisory,
-ephemeral, dismissable, never touching user nodes/edges). Resolution — **generalize
-the channel's contract**; `spawn/chunk/done` become the maximal-intensity subset:
+state") and #9 ("Redis pub/sub = ghost node streaming **only**"). The new signals
+are strictly *less* intrusive than a ghost (advisory, ephemeral, dismissable, never
+touching user nodes/edges). Resolution — **generalize the channel's contract**;
+`spawn/chunk/done` become the maximal-intensity subset:
 
 ```typescript
 type RedisMessage =
-  | { type: 'offer';    offer: InterventionOffer }   // NEW — low-intensity, no content
-  | { type: 'withdraw'; offer_id: string }            // NEW — AI rescinds (focus moved on)
+  | { type: 'waiting';  offer: InterventionOffer }   // NEW — "mature + pipeline waiting" (§4d)
+  | { type: 'offer';    offer: InterventionOffer }    // NEW — low-intensity show (glow/card, §5)
+  | { type: 'withdraw'; offer_id: string }            // NEW — supersede / no-longer-mature (§4e)
   | { type: 'spawn';    descriptor: SpawnDescriptor }  // existing
   | { type: 'chunk';    target: string; data: string } // existing
   | { type: 'done' }                                   // existing
 ```
 
-`src/routes/stream.ts` needs **no change** — it's payload-agnostic (only
+`src/routes/stream.ts` needs **no change** — it is payload-agnostic (only
 special-cases `done`/`ping`). This amendment must be **ratified before code lands**
 (via the `update-ai-context` skill: CANVAS-SYNC.md, non-negotiable #9, and the
-Observer's new gate role).
+new **judge** role that retires the Orchestrator).
 
 ---
 
@@ -340,30 +384,39 @@ Observer's new gate role).
 
 ### Decided ✓
 - Two consent gates: presentation (new) + acceptance (existing).
-- Two axes: **Trigger** (generate) vs **Show** (reveal); class-based action taxonomy.
-- **Timer:** frontend-owned, visible, pausable; adaptive 5/10s.
+- Two axes: **Trigger** (generate) vs **Show** (reveal); class-based taxonomy.
+- **Trigger ruleset** = frontend attention/action gate only; **maturity is the
+  judge's job**, never in the ruleset.
+- **Judge = the new Orchestrator**: Attunement + **full canvas-map** → one call
+  `{ mature, route }`; single best agent; dedup vs. the **full** rejection-insight
+  set; thinking:high, LLM judgment. **Retires the Orchestrator**; the **Observer
+  reverts to a content agent only**.
+- **Tier:** never substitute a weaker agent — tier-locked best → **upgrade offer** on
+  the sidebar card. `question_style` from Attunement.
+- **decide → wait → generate handshake**: `mature + pipeline waiting` **async over
+  SSE**; Inngest **`waitForEvent` + hard timeout**; timer between decision and gen.
+- **Processing timer shown by default**; a *waiting* user can **"process now"**.
+- **Re-judge on material change** at wake (context snapshot); else reuse cached route.
+- **Concurrency:** single-flight per session + **monotonic version guard**
+  (latest-seq-wins, abort at publish boundary), built **per key** (session now →
+  branch later).
+- **Show model:** 2×2 **directness × in-view** → glow (hi/lo) or sidebar card;
+  backend supplies the headline; glow-first *arrival*.
 - **Attention states:** two only — waiting / thinking (no "away").
-- **Glow-first arrival**; reveal = f(state, show-rule).
-- **Maturity gate:** dedicated prompt, **full canvas content**, thinking:high, LLM
-  judgment; per-agent, locus-specific, evidence-based.
-- **Selection: single best agent**; dedup vs. **full** active rejection-insight set.
-- **Gate replaces the Orchestrator**; tier → **upgrade offer, never substitute**;
-  `question_style` from Attunement.
 - **Phase:** local to the frontier (coarse session phase kept); oscillating +
   hysteretic; only **backtrack** carries insight forward.
-- **Impact Check / context snapshot** for staleness + gate verdict-reuse.
 - **Curation** = rolling interaction-texture signal (not per-action).
 - **Learning:** offer-response ≠ content-rejection (separate receptivity model).
-- **Redis protocol** generalized (`offer`/`withdraw`) — pending ratification.
+- **Redis protocol** generalized (`waiting`/`offer`/`withdraw`) — pending ratification.
 
 ### Open ?
-- **Proactive Outer-Sub / Articulator** in v1, or keep explicit-edge-only (gate
+- **Proactive Outer-Sub / Articulator** in v1, or keep explicit-edge-only (judge
   over Expander/Stress-Tester +Observer)? *Rec: enable, scoped to strong evidence.*
-- **Impact Check on curation** (move/delete `show`) routes through staleness? *Lean yes.*
-- **Local phase** adopt as above? *Lean yes.*
-- **Phase hysteresis threshold** — confidence + sustained-over-window definition.
-- **Level set for v1** — Anchored glow + Invitation first, add Hold/Ambient later?
+- **Phase hysteresis threshold** — the confidence + sustained-over-window definition.
+- **Level set for v1** — which show/timer surfaces ship first.
 - **User "interruption tolerance" setting** (DND ↔ Proactive) now or later?
+- **Branching-from-any-node** (future) — flips the guard key to `branch`; may scope
+  the judge's canvas-map read to the subtree.
 
 ---
 
