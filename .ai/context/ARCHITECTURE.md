@@ -31,12 +31,15 @@ Frontend (Vercel — thinking-canvas-web)
         └── SSE (EventSource) ← ghost node streaming via Redis
 
 Railway (Backend — this repo)
-  └── Hono server
-        ├── POST /api/canvas-event  → save metadata + fire Inngest
+  └── Hono server (port 3001 · CORS locked to FRONTEND_URL · routes are
+      UNAUTHENTICATED today — no JWT check; flagged in FRONTEND-CONTRACT.md §11)
+        ├── POST /api/canvas-event  → enrich node (summary+embedding) + fire Inngest
         ├── GET  /api/stream/:sessionId → SSE via Upstash Redis subscription
         ├── POST /api/ghost-status  → update ghost pair status in thread
-        ├── POST /api/session/complete → Session Complete flow
+        ├── POST /api/session/start → create session + thread boundary turns
+        ├── POST /api/session/complete → Session Complete flow (async Observer)
         ├── POST /api/stripe/webhook → subscription sync
+        ├── GET  /health → liveness
         └── Inngest worker (same process)
               ├── agent-pipeline (debounced 10s by session_id)
               ├── articulator-pipeline (immediate)

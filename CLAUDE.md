@@ -28,6 +28,8 @@ Receives canvas events from the frontend, runs the AI agent pipeline, and stream
 | Any agent work (create/modify/debug) | `CORE-CONCEPTS.md` + `AGENT-PIPELINE.md` |
 | Serialization / thread / context window | `CORE-CONCEPTS.md` + `SERIALIZATION.md` |
 | Ghost streaming / SSE / Redis / spawn flag | `CANVAS-SYNC.md` |
+| Frontend integration — API contract, SSE consumer behaviour, marker parsing, FE↔Supabase surface | `FRONTEND-CONTRACT.md` |
+| Changing anything the frontend consumes (routes, `RedisMessage`, agent output format, Zod schemas, RLS) | `FRONTEND-CONTRACT.md` — update it in the same change |
 | Rejection Insights Engine | `AGENT-PIPELINE.md` + `CANVAS-SYNC.md` |
 | Multi-Canvas / session model | `CORE-CONCEPTS.md` + `ARCHITECTURE.md` |
 | Database / schema / migrations | `DATABASE-SCHEMA.md` + `CORE-CONCEPTS.md` |
@@ -128,6 +130,7 @@ thinking-canvas-api/
 | Modify Rejection Insights | `src/pipeline/rejection-insights.ts` |
 | Add Inngest pipeline | `src/pipeline/[name].ts` |
 | SSE streaming endpoint | `src/routes/stream.ts` |
+| The frontend-facing contract (endpoints, SSE messages, marker format, FE Supabase surface) | `.ai/context/FRONTEND-CONTRACT.md` |
 | DB migration | `supabase/migrations/` |
 | Understand a table's fields | `.ai/context/DATABASE-SCHEMA.md` |
 | Shared types | `types/index.ts` |
@@ -207,30 +210,20 @@ npm run inngest:dev        # Start Inngest dev server separately
 
 ## Current Build Status
 
-**As of 2026-06-09 — Implementation not yet started.**
+**As of 2026-07-05 — core backend (features 1–10) is BUILT and live in `src/`.**
+Bootstrap, DB foundation + migrations, types/Zod schemas, DB layer, cursor
+tools, serializer, all 7 agents, ghost streaming, all 5 Inngest pipelines, and
+the API routes exist. The frontend repo (thinking-canvas-web) has **not been
+started** — `FRONTEND-CONTRACT.md` is its build-against contract.
 
-The repo was bootstrapped with `create-next-app`. The `src/app/` Next.js scaffold and the root Next.js config must be replaced by the Hono backend as the first implementation task.
+**Designed but NOT implemented (do not assume these exist in code):**
 
-**What exists:**
-- `.ai/context/` — complete architecture documentation (verified 2026-06-08)
-- `.ai/skills/` — skill guides for agent/tool/pipeline/migration creation
-- `.ai/features/` — feature stories with tasks (see Implementation Order below)
-- `supabase/migrations/` — not yet created
-
-**What does NOT exist yet (must be built in this order):**
-
-| # | Feature | Story |
-|---|---|---|
-| 1 | Project bootstrap — Hono + TypeScript + Inngest | `.ai/features/project-bootstrap/` |
-| 2 | Database foundation — all tables, RLS, pgvector | `.ai/features/database-foundation/` |
-| 3 | Core types + Zod schemas | `.ai/features/core-types/` |
-| 4 | DB layer — `src/db/*` | `.ai/features/db-layer/` |
-| 5 | Cursor tools — `src/tools/*` | `.ai/features/cursor-tools/` |
-| 6 | Serializer — `src/serializer/*` | `.ai/features/serializer/` |
-| 7 | Agent implementations — `src/agents/*` | `.ai/features/agent-implementations/` |
-| 8 | Ghost streaming — `src/lib/*` + `src/streaming/*` | `.ai/features/ghost-streaming/` |
-| 9 | Inngest pipelines — `src/pipeline/*` | `.ai/features/inngest-pipelines/` |
-| 10 | API routes — `src/routes/*` + `src/index.ts` | `.ai/features/api-routes/` |
+| Item | Where the design lives |
+|---|---|
+| Intervention Spectrum (judge, offers, `waiting`/`offer`/`withdraw` messages, phase latch) | `.ai/features/intervention-spectrum/` — status: draft |
+| Observer structure writes + per-edge accept/reject (`observer_structures`/`observer_edges` rows, `POST /api/observer-edge-status`) | Tables + Zod schema exist; no pipeline writes, no route |
+| Branching | `.ai/features/branching/story.md` — deferred |
+| `ignored` ghost status, velocity-adaptive debounce, phase transition (`updatePhase` uncalled), `carry_forward_ids` handling | Referenced in context docs; see `FRONTEND-CONTRACT.md` §10–11 |
 
 > **Note:** `.ai/features/sdk-delivery-filter/` is from a different project (Spring Boot / help-center-v2). Ignore it.
 

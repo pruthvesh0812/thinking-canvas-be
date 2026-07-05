@@ -1,12 +1,16 @@
 ---
-last-verified: 2026-06-08
-verified-against: ThinkingCanvas_TechnicalBuild.docx (post single-user refactor)
+last-verified: 2026-07-05
+verified-against: src/routes/stream.ts · src/streaming/* · src/pipeline/* · src/routes/ghost-status.ts (code, line-by-line)
 stale-after-days: 30
 ---
 
 # CANVAS-SYNC.md
 
 > **Load this when:** Working on ghost node streaming, SSE endpoint, Upstash Redis pub/sub, spawn descriptor, ghost status updates, or Rejection Insights UI flow.
+>
+> **Frontend view of this contract:** `FRONTEND-CONTRACT.md` documents the same
+> surfaces from the consumer side (marker parsing, thread_id resolution, accept
+> persistence, reconnect behaviour). Any change here must be mirrored there.
 
 ---
 
@@ -101,41 +105,44 @@ type SpawnDescriptor = {
 type RedisMessage =
   | { type: 'spawn';  descriptor: SpawnDescriptor }
   | { type: 'chunk';  target: string; data: string }  // target = ghost_id
-  | { type: 'done' }
+  | { type: 'done' }                                   // carries no ids — known P0 gap (FRONTEND-CONTRACT.md §11)
 ```
+
+The SSE route additionally emits `{ type: 'ping' }` every 25s (keepalive only —
+never published to Redis).
+
+**`chunk.target` is ALWAYS the context ghost_id** — there is no server-side
+splitting of the `[QUESTION]` section onto the question ghost. Agent output
+streams raw, including its inline markers (`[NODE_TYPE: …]`, `[QUESTION]`,
+`[ARTICULATION n]` — see the prompt constants in `src/agents/*.ts`); the
+frontend parses them. If a token-splitting layer is ever added to
+`src/streaming/tokens.ts`, update FRONTEND-CONTRACT.md §7.1 in the same change.
 
 ---
 
 ## Hono SSE Endpoint
 
-```typescript
-// src/routes/stream.ts
-app.get('/api/stream/:sessionId', async (c) => {
-  const sessionId = c.req.param('sessionId')
+`GET /api/stream/:sessionId` (`src/routes/stream.ts`) subscribes to
+`canvas:stream:${sessionId}` via `@upstash/redis` (`redis.subscribe<RedisMessage>`
+— messages arrive already deserialized and are re-stringified into
+`stream.writeSSE({ data })`). Keepalive `{type:'ping'}` every 25s. Messages are
+plain `data:` events — no `event:`/`id:` fields.
 
-  return streamSSE(c, async (stream) => {
-    const sub = redis.subscribe(`canvas:stream:${sessionId}`)
+**Actual lifecycle (as implemented):** the handler holds the response open on a
+promise and resolves it — closing the SSE connection — on the first `done`
+message, a write failure, or client abort. Consequences:
 
-    sub.on('message', async (_, message) => {
-      await stream.writeSSE({ data: message })
+- The browser's EventSource must auto-reconnect after every generation
+  (default behaviour, ~3s).
+- Upstash pub/sub has **no replay** — anything published during the reconnect
+  window is lost.
+- With two concurrent generations on one session (e.g. debounced Expander +
+  immediate Articulator), the first `done` closes the connection mid-stream
+  for the other.
 
-      if (JSON.parse(message).type === 'done') {
-        await sub.unsubscribe()
-      }
-    })
-
-    // Keepalive ping every 25s to prevent SSE timeout
-    const ping = setInterval(async () => {
-      await stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) })
-    }, 25000)
-
-    stream.onAbort(() => {
-      clearInterval(ping)
-      sub.unsubscribe()
-    })
-  })
-})
-```
+This close-on-done behaviour is flagged as P0 in FRONTEND-CONTRACT.md §11
+(recommended fix: hold the connection until abort; `done` becomes
+informational). If you change it, update both docs.
 
 ---
 
@@ -143,35 +150,54 @@ app.get('/api/stream/:sessionId', async (c) => {
 
 ```typescript
 // POST /api/ghost-status
-// Payload:
+// Payload (zod: ghostStatusSchema in types/index.ts):
 {
   thread_id: string
-  turn_index: number              // which AssistantMessage in thread
+  turn_index: number              // index into agent_threads.messages — the RAW array, not just assistant turns
   canvas_id: string
   session_id: string
   context_node_status: 'accepted' | 'rejected'
-  question_node_status: 'accepted' | 'rejected' | null
-  rejection_reason?: RejectionReason
-  interacted_at: number
+  question_node_status: 'accepted' | 'rejected' | null   // null = pair has no question node
+  rejection_reason?: RejectionReason  // omitted on rejection ⇒ defaults to 'skip_for_now'
+  interacted_at: number               // unix ms — validated, currently unused
 }
 
-// Backend:
-// 1. Update AssistantMessage in agent_thread (canvas-scoped)
-// 2. If context_node_status === 'rejected' → fire rejection-insights Inngest event
+// Backend (src/routes/ghost-status.ts):
+// 1. resolvePairStatus() maps the two per-node choices → one GhostStatus
+//    (accepted | context_accepted | question_accepted | rejected) and writes it
+//    onto the ghost_pair turn (setGhostPairStatus)
+// 2. If context_node_status === 'rejected' → fire canvas/ghost.rejected
 // 3. NO Realtime broadcast — single-user, no other clients to notify
+//
+// NOTE: no stream message carries thread_id/turn_index today — the frontend
+// resolves them by reading agent_threads (canvas_id, agent_role) and matching
+// ghost_pair.context_ghost_id, AFTER done (with retry — the turn is persisted
+// after done publishes). See FRONTEND-CONTRACT.md §7.2 / §11 P0.
 ```
 
 ---
 
 ## Frontend Responsibilities (for reference — not implemented here)
 
+> Full consumer-side spec with payloads and workarounds: **`FRONTEND-CONTRACT.md`**.
+
 The frontend (separate repo: thinking-canvas-web) is responsible for:
 - Rendering ghost node HTML from the spawn descriptor (backend defines content only)
 - Creating ghost node + edge React Flow elements on `spawn` message
 - Filling ghost node text content on `chunk` messages (by ghost_id target)
-- Accept/Reject UI and calling POST /api/ghost-status
+- **Parsing the inline markers out of the raw token stream** — `[NODE_TYPE: x]`
+  (overrides the descriptor's default type), `[QUESTION]` (split point: route
+  the rest into the question ghost — the backend does not split), and the
+  Articulator's `[ARTICULATION n]` sections
+- Removing an empty question ghost + edge at `done` (appreciation responses may omit `[QUESTION]`)
+- Accept/Reject UI and calling POST /api/ghost-status (resolving
+  thread_id/turn_index via an agent_threads read — see FRONTEND-CONTRACT.md §7.2)
+- **Persisting accepted ghosts itself** — inserting the `nodes` (owner:'ai') and
+  `edges` rows; the backend only records the status on the thread
 - RejectionReasonSelector component
-- Writing user-created nodes/edges directly to Supabase (no backend involvement)
+- Writing user-created nodes/edges directly to Supabase, then notifying via
+  POST /api/canvas-event (write-first, notify-second)
+- Reconnecting the EventSource after every `done` (the server closes the stream)
 
 The backend does NOT define how ghost nodes look. It defines:
 - What type of node (reframe, mirror, question etc.)
@@ -184,20 +210,19 @@ The backend does NOT define how ghost nodes look. It defines:
 
 ```
 pending → accepted | rejected | context_accepted | question_accepted
-pending + (2 new nodes created without interaction) → ignored
+pending + (2 new nodes created without interaction) → ignored   ← DESIGNED, not implemented — nothing sets 'ignored' today
 ```
 
-On rejection:
+On rejection (actual event payload — src/routes/ghost-status.ts):
 ```typescript
 await inngest.send({
   name: 'canvas/ghost.rejected',
   data: {
     canvas_id, session_id, thread_id,
-    triggered_by_node_id,
-    rejected_ghost_content,
-    rejection_reason,
-    ghost_type: 'context' | 'question'
-  }
+    agent_role,                       // read from the thread row
+    rejected_ghost_content,           // the whole ghost_pair turn's content
+    rejection_reason,                 // payload value, or 'skip_for_now' default
+  },
 })
 ```
 
@@ -206,41 +231,37 @@ await inngest.send({
 ## Spawn in Agent Pipeline (Inngest step order)
 
 ```typescript
-// src/pipeline/agent-pipeline.ts
+// src/pipeline/agent-pipeline.ts (same shape in articulator/outer-sub pipelines)
 
-// Step 4: Build and publish spawn
-await step.run('publish-spawn', async () => {
-  const descriptor = buildSpawnDescriptor({
-    trigger_node_id: event.data.node_id,
-    session_id: event.data.session_id,
-    agent_role: route.agent,
-    // context_node type determined AFTER first Orchestrator decision
-    // but ghost_ids are pre-assigned here (UUIDs)
-    context_ghost_id: crypto.randomUUID(),
-    question_ghost_id: crypto.randomUUID(),
+// Step 4: Build and publish spawn — ghost ids are minted INSIDE
+// buildSpawnDescriptor (src/streaming/spawn.ts); the node_type passed here is
+// only the pre-assigned default (the agent's [NODE_TYPE:…] marker in the
+// token stream drives the final rendered type on the frontend).
+const descriptor = await step.run('publish-spawn', async () => {
+  const d = buildSpawnDescriptor({
+    trigger_node_id: node_id,
+    session_id,
+    agent_role: agentRole,                          // 'expander' | 'stress_tester' here
+    context_node_type: DEFAULT_CONTEXT_TYPE[agentRole],
+    has_question_node: true,                        // articulator pipeline passes false
   })
-
-  await redis.publish(
-    `canvas:stream:${event.data.session_id}`,
-    JSON.stringify({ type: 'spawn', descriptor })
-  )
-
-  return descriptor
+  await publishSpawn(session_id, d)
+  return d
 })
 
-// Step 5: Sleep for ghost animation
-await inngest.sleep('ghost-animation', '1500ms')
+// Step 5: Sleep for ghost animation (step.sleep — inngest.sleep does not exist)
+await step.sleep('ghost-animation', '1500ms')
 
-// Step 6: Stream context node content
-await step.run('stream-context', async () => {
-  const stream = await agent.stream(serializedContext)
-  for await (const token of stream.textStream) {
-    await redis.publish(
-      `canvas:stream:${event.data.session_id}`,
-      JSON.stringify({ type: 'chunk', target: descriptor.context_node.ghost_id, data: token })
-    )
-  }
+// Step 7: Stream — streamAgentOutput (src/streaming/tokens.ts) publishes every
+// token as a chunk targeting the CONTEXT ghost id and returns the full text.
+const responseText = await step.run('stream-context', async () => {
+  const stream = await streamExpander({ … })
+  return streamAgentOutput(stream.textStream, descriptor.context_node.ghost_id, session_id)
 })
+
+// Step 8 ('finalize'): publishDone(session_id) THEN appendMessage(ghost_pair,
+// pair_status:'pending') — done is published BEFORE the turn is persisted,
+// which is why frontend thread reads after done must retry (FRONTEND-CONTRACT.md §7.2).
 ```
 
 ---
