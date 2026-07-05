@@ -27,7 +27,7 @@ today — DESIGN.md §4c).
 ## Blast Radius
 | Component | Impact |
 |---|---|
-| `types/index.ts` | `InterventionOffer` (+ `seq`, `context_snapshot`, `directness`, `status`); extend `RedisMessage` (`waiting`/`offer`/`withdraw`) |
+| `types/index.ts` | `InterventionOffer` (+ `seq`, `context_fingerprint`, `directness`, `status`); extend `RedisMessage` (`waiting`/`offer`/`withdraw`) |
 | `src/agents/orchestrator.ts` → **judge** | Repurpose into the judge: input Attunement + **full canvas-map**, one call → `{ mature, route, locus_node_ids, headroom, confidence }`; single best; dedup vs full rejection-insight set; tier→upgrade-offer (never substitute) |
 | `src/agents/observer.ts` | **Reverts to content agent only** — the earlier "gate mode" idea is dropped (the judge holds maturity now) |
 | `src/db/sessions.ts` | Wire the dead `updatePhase()` (v1: one-way `diverging→converging` latch + hysteresis); add `latest_seq` for the version guard |
@@ -73,10 +73,14 @@ Generalize `RedisMessage` (DESIGN.md §9); `spawn/chunk/done` stay as the top ru
 
 ## Supabase Migration
 Yes.
-- `intervention_offers`: `id · canvas_id · session_id · agent_role · trigger_node_id ·
-  anchor_node_ids uuid[] · seq int · context_snapshot · directness · headline text null ·
+- `intervention_offers` (**ephemeral** — purged on session close + TTL, not retained):
+  `id · canvas_id · session_id · agent_role · trigger_node_id · anchor_node_ids uuid[] ·
+  seq int · context_fingerprint · directness · headline text null ·
   status (waiting|shown|pulled|dismissed|superseded|expired) · created_at · resolved_at` (+ RLS).
 - `sessions.latest_seq int not null default 0` (version guard, §4e).
+- **Context fingerprint** (change-detection, not content): either a per-canvas
+  version counter bumped by a **DB trigger** on node/edge writes, or `(node_count,
+  max updated_at)` — the latter needs a new `nodes.updated_at`.
 
 ## Inngest Events
 | Event | Fired from | Handling |
@@ -103,11 +107,11 @@ Yes.
   Stress-Tester actually fires once phase transitions land.
 
 ## Task Breakdown
-- **task-01:** types (+ `seq`/`context_snapshot`/`directness`) + `intervention_offers` migration + `sessions.latest_seq` + RLS
+- **task-01:** types (+ `seq`/`context_fingerprint`/`directness`) + `intervention_offers` migration + `sessions.latest_seq` + fingerprint source (DB trigger version counter, or `nodes.updated_at`) + RLS
 - **task-02:** phase transition — wire `updatePhase()` (v1: one-way `diverging→converging` latch + hysteresis); verify Stress-Tester reachable
 - **task-03:** the **judge** (repurpose `orchestrator.ts`): canvas-map input, maturity + single-best, tier upgrade-offer; retire Orchestrator from `mastra.ts`; Observer→content-only
 - **task-04:** handshake — `agent-pipeline` restructure (`waiting` → `waitForEvent` → re-judge-if-changed → generate) + `src/streaming/offer.ts` + `intervention` route
 - **task-05:** concurrency — `seq`/`latest_seq`, supersession + version guard in `guards.ts` + publish-boundary check
 - **task-06:** show ruleset `directness = f(state, show-rule)` + 2×2 surfaces + backend headline; Impact Check (snapshot compare) + staleness warnings
-- **task-07:** receptivity + interaction-texture (curation-burst) signals
+- **task-07:** receptivity + interaction-texture (curation-burst) signals; fold terminal-offer response into a running aggregate, then **purge** the offer (session-complete sweep + TTL for abandoned waits)
 - **task-08:** doc ratification via `update-ai-context` (CANVAS-SYNC.md + non-negotiable #9 + judge role + phase model)

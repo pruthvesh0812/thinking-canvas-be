@@ -242,11 +242,14 @@ it, so phase is frozen at `diverging` and the Stress-Tester (which needs
    for this phase.
 3. On go/lapse the parked run wakes and **generates** (the single-best agent
    streams). Judge said **not mature** → silent "no pipeline"; nothing is shown.
-4. **Re-judge on change (decided):** the judge stamped its decision with a
-   **context snapshot**. At wake: snapshot unchanged → generate with the cached
-   route; **changed materially** (user added nodes during the wait) → re-run
-   Attunement + judge, or **abort + `withdraw`** if no longer mature. The timer thus
-   doubles as the "let them finish" window *and* keeps the decision honest.
+4. **Re-judge on change (decided):** the judge stamps its decision with a
+   **context fingerprint** — a *change-detector*, not stored content (a per-canvas
+   version counter via DB trigger, or `(node_count, max updated_at)`; never the node
+   text). At wake: fingerprint unchanged → generate with the cached route; **changed**
+   (user added/edited nodes during the wait) → re-run Attunement + judge, or **abort +
+   `withdraw`** if no longer mature. The timer thus doubles as the "let them finish"
+   window *and* keeps the decision honest. (Over-triggering a re-judge is safe; only
+   under-triggering is a risk, so a coarse fingerprint is fine for v1.)
 
 ### 4e. Concurrency & stale ordering — single-flight + version guard
 
@@ -279,13 +282,21 @@ later step references by `id`/`seq`:
 
 | Step | Offer |
 |---|---|
-| judge → `mature` | **created**: `agent_role=route`, `anchor_node_ids=locus`, `seq` (bumps `sessions.latest_seq`), `context_snapshot`, `status='waiting'`; `headline`/`directness` null |
+| judge → `mature` | **created**: `agent_role=route`, `anchor_node_ids=locus`, `seq` (bumps `sessions.latest_seq`), `context_fingerprint`, `status='waiting'`; `headline`/`directness` null |
 | publish `waiting` (SSE) | payload = subset (`id`, anchor, agent, timer params) — no content yet |
 | parked wait | source of truth for "in flight" — supersession + `canAgentFire` read/write it |
-| process/go | wake; `context_snapshot`≠current → re-judge; guard checks `seq==latest_seq` before publish |
+| process/go | wake; `context_fingerprint`≠current → re-judge; guard checks `seq==latest_seq` before publish |
 | generation | build `SpawnDescriptor` (existing) referencing `offer.id`; stream |
 | done → show | set `directness` (show ruleset) + backend `headline`; `status='shown'`; publish `offer`/`spawn…done` |
 | user acts | `status → pulled/dismissed/superseded/expired`; dismiss/defer → receptivity model (§8) |
+
+**Retention — ephemeral, not permanent.** The offer is operational state; it's read
+only across the active flow (which is why it must be durable through the wait, not
+in-memory). At a **terminal status** its receptivity signal is folded into a running
+aggregate (§8), then the row is **purged** — swept at **session close**
+(session-complete pipeline) plus a **TTL** for abandoned waits. The permanent "AI
+helped here" record lives on the thread (`ghost_pair`) + the `AiContribution` audit,
+not here.
 
 Relationship to existing types: `SpawnDescriptor` (unchanged) = the ghost graph,
 built only at generation; `GhostPair` (unchanged) = the post-generation thread
@@ -324,8 +335,9 @@ fully-formed; hover reveals.
 
 ## 6. Context snapshot & staleness (the Impact Check)
 
-Every offer/ghost is stamped with the **context snapshot** it was born from (a
-context hash or trigger node-sequence index). Two jobs use it:
+Every offer/ghost is stamped with the **context fingerprint** it was born from — a
+cheap change-detector (per-canvas version counter, or `(node_count, max updated_at)`),
+**not stored content**. Two jobs use it:
 
 1. **Wake-time re-judge (§4d):** at generation, unchanged snapshot → cached route;
    material change → re-judge or abort+withdraw.
@@ -412,7 +424,11 @@ new **judge** role that retires the Orchestrator).
 - **decide → wait → generate handshake**: `mature + pipeline waiting` **async over
   SSE**; Inngest **`waitForEvent` + hard timeout**; timer between decision and gen.
 - **Processing timer shown by default**; a *waiting* user can **"process now"**.
-- **Re-judge on material change** at wake (context snapshot); else reuse cached route.
+- **Re-judge on material change** at wake via a **context fingerprint** (change-detector
+  — version counter / `(count, max updated_at)`, **not stored content**); else reuse cached route.
+- **Offer storage is ephemeral** — durable through the active flow, then purged
+  (session close + TTL); receptivity signal folded into a running aggregate first.
+  Permanent record lives on the thread + `AiContribution`, not the offer.
 - **Concurrency:** single-flight per session + **monotonic version guard**
   (latest-seq-wins, abort at publish boundary), built **per key** (session now →
   branch later).
