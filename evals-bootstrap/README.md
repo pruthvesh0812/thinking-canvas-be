@@ -23,6 +23,7 @@ pinned git submodule. Bonus: same AI SDK (`ai` + `@ai-sdk/google`), same types
 | `CLAUDE.template.md` | Becomes the new repo's `CLAUDE.md` — agent context: architecture, core concepts, non-negotiables |
 | `TASKS.md` | Ordered implementation tasks (0–12), each independently shippable |
 | `GUIDELINES.md` | How to *use* the finished tool to improve ThinkingCanvas — workflows, metric discipline, dataset hygiene |
+| `FRONTEND.md` | Frontend decision: no FE in v1; phased local-only viewer (Tasks 13–14) — and why not Next.js |
 
 ## Quickstart
 

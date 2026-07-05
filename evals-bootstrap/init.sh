@@ -183,6 +183,7 @@ EOF
 cp "$KIT_DIR/CLAUDE.template.md" CLAUDE.md
 cp "$KIT_DIR/TASKS.md" TASKS.md
 cp "$KIT_DIR/GUIDELINES.md" GUIDELINES.md
+cp "$KIT_DIR/FRONTEND.md" FRONTEND.md
 
 # ── Backend submodule (pinned — the code under test) ───────────────────────
 git submodule add "$BACKEND_URL" vendor/thinking-canvas-be

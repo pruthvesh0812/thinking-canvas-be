@@ -237,6 +237,35 @@ question directly") on a branch fails the gate; a no-op change passes.
 
 ---
 
+## Task 13 — Self-contained HTML report (Phase B — after Task 10 is in real use)
+
+See `FRONTEND.md` for the full decision context. No framework — a template
+function in `src/report/html.ts` emitting one self-contained `report.html`
+per compare (inline CSS/JS, no server): verdict header, metric deltas, and a
+**replay card** per top win/loss — read-only SVG of the as-of canvas graph
+(trigger highlighted, edges typed), recorded vs candidate ghost side by side,
+scores, judge rationale.
+
+**Done when:** `compare` emits `report.html` alongside the markdown; the file
+opens from the filesystem with no network requests; a replay card renders the
+fixture canvas correctly.
+
+## Task 14 — Interactive review viewer (Phase C — only when review volume justifies it)
+
+`viewer/` npm workspace: Vite + React + TS, graph via `@xyflow/react` (or the
+Task 13 SVG renderer). `tc-eval serve` exposes read-only run/dataset endpoints
+on 127.0.0.1 plus one append-only `POST /review`. Three screens: run browser,
+keyboard-first replay review (`a`/`d`/`g`/`n` → `reviews/<run>/review.jsonl`),
+golden queue (promote shells out to `tc-eval golden add`). Schemas imported
+from `src/lib/` — never redeclared. Disagree-rates from `review.jsonl` feed
+judge recalibration (Task 9).
+
+**Done when:** you can review 20 records end to end without touching the
+mouse; `review.jsonl` validates against its schema; the server refuses
+non-localhost binds.
+
+---
+
 ## Later (out of v1 scope, tracked here so they aren't lost)
 
 - Observer scoring (structured DAG output needs graph-aware metrics +
