@@ -303,6 +303,31 @@ built only at generation; `GhostPair` (unchanged) = the post-generation thread
 record for accept/reject; `offer.id` links all three. `headline`/`directness` are
 filled at *show* (they need the generated content + the attention state then).
 
+### 4g. Canvas state comes from Supabase — and the sync gap
+
+The judge reads the **canvas-map from Supabase** (the single source of truth); the
+FE writes nodes/edges *directly* to Supabase and the BE reads them. So there is **no
+"push full FE state to BE" endpoint, and there should not be** — the fingerprint and
+the judge's canvas-map are DB reads. The judge always runs *after* the DB write:
+the ordering contract is **write-to-Supabase → then notify** (the current
+`/api/canvas-event` flow already does this — FE writes, POSTs the id, BE reads back).
+
+The existing notify hook is **create-only today** — `canvasEventSchema.event_type`
+is `'node.created' | 'edge.created'`, and the route handles only those. Dependencies
+this feature adds:
+
+- **FE must persist ALL mutations** to Supabase (delete / edit / re-parent), not
+  just creates. The fingerprint catches anything actually written — but is blind to a
+  delete the FE never persisted. (Cross-repo: FE not started; also needs DB-layer
+  delete support.)
+- **Extend `/api/canvas-event`** (or the new `/api/intervention/trigger`) to carry
+  those mutation types where the BE must *act* (matrix move/delete → show;
+  impact-check on delete of an anchored node). For the fingerprint alone no new
+  notify is needed — the DB read + trigger handle it.
+- **Edits double-implicate:** a node content edit makes the create-time `summary` +
+  `embedding` stale, so `node.updated` must re-run the enrich step (as
+  `node.created` does), not just bump the fingerprint.
+
 ---
 
 ## 5. Show axis — the show ruleset
@@ -336,8 +361,10 @@ fully-formed; hover reveals.
 ## 6. Context snapshot & staleness (the Impact Check)
 
 Every offer/ghost is stamped with the **context fingerprint** it was born from — a
-cheap change-detector (per-canvas version counter, or `(node_count, max updated_at)`),
-**not stored content**. Two jobs use it:
+cheap change-detector, **not stored content**. Use a **per-canvas version counter
+bumped by a DB trigger on BOTH `nodes` and `edges`** (insert/update/delete): it
+catches **re-parenting** (e.g. delete edge A–C + create edge B–C) that a node-only
+`(node_count, max updated_at)` composite would miss. Two jobs use it:
 
 1. **Wake-time re-judge (§4d):** at generation, unchanged snapshot → cached route;
    material change → re-judge or abort+withdraw.
@@ -424,8 +451,9 @@ new **judge** role that retires the Orchestrator).
 - **decide → wait → generate handshake**: `mature + pipeline waiting` **async over
   SSE**; Inngest **`waitForEvent` + hard timeout**; timer between decision and gen.
 - **Processing timer shown by default**; a *waiting* user can **"process now"**.
-- **Re-judge on material change** at wake via a **context fingerprint** (change-detector
-  — version counter / `(count, max updated_at)`, **not stored content**); else reuse cached route.
+- **Re-judge on material change** at wake via a **context fingerprint** — a per-canvas
+  version counter bumped by a **DB trigger on `nodes` + `edges`** (catches re-parenting
+  a node-only composite misses); **not stored content**. Else reuse cached route.
 - **Offer storage is ephemeral** — durable through the active flow, then purged
   (session close + TTL); receptivity signal folded into a running aggregate first.
   Permanent record lives on the thread + `AiContribution`, not the offer.
@@ -441,6 +469,12 @@ new **judge** role that retires the Orchestrator).
 - **Curation** = rolling interaction-texture signal (not per-action).
 - **Learning:** offer-response ≠ content-rejection (separate receptivity model).
 - **Redis protocol** generalized (`waiting`/`offer`/`withdraw`) — pending ratification.
+
+### Dependencies
+- **Canvas sync (§4g):** Supabase is the single source of truth; **no push-full-state
+  endpoint**. But `/api/canvas-event` is **create-only** today — must grow to
+  delete/edit/move, the **FE must persist all mutations** (cross-repo; FE not started;
+  needs DB-layer delete support), and `node.updated` must re-enrich summary+embedding.
 
 ### Open ?
 - **Proactive Outer-Sub / Articulator** in v1, or keep explicit-edge-only (judge

@@ -78,9 +78,10 @@ Yes.
   seq int · context_fingerprint · directness · headline text null ·
   status (waiting|shown|pulled|dismissed|superseded|expired) · created_at · resolved_at` (+ RLS).
 - `sessions.latest_seq int not null default 0` (version guard, §4e).
-- **Context fingerprint** (change-detection, not content): either a per-canvas
-  version counter bumped by a **DB trigger** on node/edge writes, or `(node_count,
-  max updated_at)` — the latter needs a new `nodes.updated_at`.
+- **Context fingerprint** (change-detection, not content): a per-canvas version
+  counter bumped by a **DB trigger on BOTH `nodes` and `edges`** (insert/update/delete)
+  — catches re-parenting (edge delete+create) that a node-only `(node_count, max
+  updated_at)` composite would miss.
 
 ## Inngest Events
 | Event | Fired from | Handling |
@@ -98,8 +99,13 @@ Yes.
 - Frontend keys ghosts by `(anchor_node_id, seq)`.
 
 ## Risks
+- **Canvas sync is create-only today** — `canvasEventSchema` is `node.created |
+  edge.created`. Deletes/edits/re-parents must be persisted to Supabase by the FE
+  (cross-repo; FE not started) and the notify surface extended, or the judge +
+  fingerprint read stale state (DESIGN.md §4g). Source of truth stays Supabase — no
+  push-full-state endpoint.
 - **Judge cost** — full-canvas + thinking:high on the hot path; bounded by the
-  frontend trigger ruleset + snapshot verdict-reuse (§6).
+  frontend trigger ruleset + fingerprint verdict-reuse (§6).
 - **Offer/rejection cross-contamination** — deferring a timer ≠ rejecting content;
   keep offer-response out of `rejection_insights` (§8).
 - **Stale ordering** — the version guard is mandatory, not optional (§4e).
@@ -112,6 +118,9 @@ Yes.
 - **task-03:** the **judge** (repurpose `orchestrator.ts`): canvas-map input, maturity + single-best, tier upgrade-offer; retire Orchestrator from `mastra.ts`; Observer→content-only
 - **task-04:** handshake — `agent-pipeline` restructure (`waiting` → `waitForEvent` → re-judge-if-changed → generate) + `src/streaming/offer.ts` + `intervention` route
 - **task-05:** concurrency — `seq`/`latest_seq`, supersession + version guard in `guards.ts` + publish-boundary check
-- **task-06:** show ruleset `directness = f(state, show-rule)` + 2×2 surfaces + backend headline; Impact Check (snapshot compare) + staleness warnings
-- **task-07:** receptivity + interaction-texture (curation-burst) signals; fold terminal-offer response into a running aggregate, then **purge** the offer (session-complete sweep + TTL for abandoned waits)
-- **task-08:** doc ratification via `update-ai-context` (CANVAS-SYNC.md + non-negotiable #9 + judge role + phase model)
+- **task-06:** extend the canvas sync surface — `canvas-event` (+ `node.updated`
+  re-enrich, `node.deleted`/`edge.deleted`/re-parent events); fingerprint DB trigger
+  on nodes+edges. Prereq for the Impact Check (DESIGN.md §4g)
+- **task-07:** show ruleset `directness = f(state, show-rule)` + 2×2 surfaces + backend headline; Impact Check (fingerprint compare) + staleness warnings
+- **task-08:** receptivity + interaction-texture (curation-burst) signals; fold terminal-offer response into a running aggregate, then **purge** the offer (session-complete sweep + TTL for abandoned waits)
+- **task-09:** doc ratification via `update-ai-context` (CANVAS-SYNC.md + non-negotiable #9 + judge role + phase model)
