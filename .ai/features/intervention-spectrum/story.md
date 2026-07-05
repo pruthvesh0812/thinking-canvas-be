@@ -113,14 +113,15 @@ Yes.
   Stress-Tester actually fires once phase transitions land.
 
 ## Task Breakdown
-- **task-01:** types (+ `seq`/`context_fingerprint`/`directness`) + `intervention_offers` migration + `sessions.latest_seq` + fingerprint source (DB trigger version counter, or `nodes.updated_at`) + RLS
+Full task files in [`tasks/`](./tasks/).
+- **task-01:** types (+ `seq`/`context_fingerprint`/`directness`) + `intervention_offers` migration + `sessions.latest_seq` + `canvas_version` fingerprint trigger (nodes+edges) + RLS
 - **task-02:** phase transition — wire `updatePhase()` (v1: one-way `diverging→converging` latch + hysteresis); verify Stress-Tester reachable
 - **task-03:** the **judge** (repurpose `orchestrator.ts`): canvas-map input, maturity + single-best, tier upgrade-offer; retire Orchestrator from `mastra.ts`; Observer→content-only
 - **task-04:** handshake — `agent-pipeline` restructure (`waiting` → `waitForEvent` → re-judge-if-changed → generate) + `src/streaming/offer.ts` + `intervention` route
 - **task-05:** concurrency — `seq`/`latest_seq`, supersession + version guard in `guards.ts` + publish-boundary check
 - **task-06:** extend the canvas sync surface — `canvas-event` (+ `node.updated`
-  re-enrich, `node.deleted`/`edge.deleted`/re-parent events); fingerprint DB trigger
-  on nodes+edges. Prereq for the Impact Check (DESIGN.md §4g)
+  re-enrich, `node.deleted`/`edge.deleted`/re-parent events). Feeds the task-01
+  fingerprint trigger; prereq for the Impact Check (DESIGN.md §4g)
 - **task-07:** show ruleset `directness = f(state, show-rule)` + 2×2 surfaces + backend headline; Impact Check (fingerprint compare) + staleness warnings
 - **task-08:** receptivity + interaction-texture (curation-burst) signals; fold terminal-offer response into a running aggregate, then **purge** the offer (session-complete sweep + TTL for abandoned waits)
 - **task-09:** doc ratification via `update-ai-context` (CANVAS-SYNC.md + non-negotiable #9 + judge role + phase model)
