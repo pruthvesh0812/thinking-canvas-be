@@ -1,5 +1,10 @@
 import { db } from './client.js'
-import type { Session, SessionPhase } from '../../types/index.js'
+import type { AttunementState, Session, SessionPhase } from '../../types/index.js'
+
+// Hysteresis threshold for the diverging→converging latch: a confident/sustained
+// shift is required so phase doesn't chatter on a single low-confidence read.
+// Tunable — see DESIGN.md §10 (open item).
+export const PHASE_SHIFT_MIN_CONFIDENCE = 0.7
 
 export async function getSession(id: string): Promise<Session> {
   const { data, error } = await db
@@ -68,4 +73,25 @@ export async function updatePhase(
     .eq('id', session_id)
 
   if (error) throw new Error(`updatePhase failed: ${error.message}`)
+}
+
+// v1 phase model = a ONE-WAY latch: diverging → converging, once. Re-divergence
+// (converging → diverging) is deferred to the branching era — see DESIGN.md §4c.
+// Flips only on a confident/sustained shift from Attunement (hysteresis), which is
+// what finally makes the converging phase — and thus the Stress-Tester — reachable.
+// Returns the phase now in effect; persists only when it actually flips.
+export async function maybeAdvancePhase(
+  session: Session,
+  attunement: Pick<AttunementState, 'phase_shift_suggested' | 'confidence'>
+): Promise<SessionPhase> {
+  if (session.current_phase === 'converging') return 'converging' // latched — never reverts in v1
+
+  const confident =
+    attunement.phase_shift_suggested &&
+    (attunement.confidence ?? 0) >= PHASE_SHIFT_MIN_CONFIDENCE
+
+  if (!confident) return session.current_phase
+
+  await updatePhase(session.id, 'converging')
+  return 'converging'
 }
