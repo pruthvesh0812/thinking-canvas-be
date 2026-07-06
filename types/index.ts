@@ -62,6 +62,7 @@ export type Canvas = {
   user_id: string
   title: string
   original_intent: string   // immutable after creation
+  canvas_version: number    // context fingerprint — bumped by DB trigger on nodes/edges (§6)
   created_at: string
 }
 
@@ -71,6 +72,7 @@ export type Session = {
   status: 'active' | 'closed'
   current_phase: SessionPhase
   node_sequence: string[]   // ordered node IDs created in THIS session only
+  latest_seq: number        // monotonic version guard — latest intervention seq (§4e)
   start_time: string
   end_time: string | null
 }
@@ -270,7 +272,38 @@ export type SpawnDescriptor = {
   }
 }
 
+// ─────────────────────────────────────────────
+// Intervention Spectrum — offer lifecycle (§4f)
+// ─────────────────────────────────────────────
+// The persisted handle for the decide → wait → generate handshake. The judge returns a
+// decision; the pipeline builds + persists an offer from it. Ephemeral — durable through
+// the active flow, then purged (session close + TTL). No retention guarantee.
+
+export type InterventionStatus =
+  | 'waiting' | 'shown' | 'pulled' | 'dismissed' | 'superseded' | 'expired'
+
+export type InterventionDirectness = 'direct' | 'subtle'
+
+export type InterventionOffer = {
+  id: string
+  canvas_id: string
+  session_id: string
+  agent_role: AgentRole
+  trigger_node_id: string
+  anchor_node_ids: string[]
+  seq: number                                 // per-session; vs sessions.latest_seq
+  context_fingerprint: string                 // change-detector, NOT content (§6)
+  directness: InterventionDirectness | null   // set at show
+  headline: string | null                     // set at show (backend-authored)
+  status: InterventionStatus
+  created_at: string
+  resolved_at: string | null
+}
+
 export type RedisMessage =
+  | { type: 'waiting'; offer: InterventionOffer }    // "mature + pipeline waiting" — starts the timer (§4d)
+  | { type: 'offer'; offer: InterventionOffer }      // low-intensity show — glow / sidebar card (§5)
+  | { type: 'withdraw'; offer_id: string }           // supersede / no-longer-mature (§4e)
   | { type: 'spawn'; descriptor: SpawnDescriptor }
   | { type: 'chunk'; target: string; data: string }  // target = ghost_id
   | { type: 'done' }
