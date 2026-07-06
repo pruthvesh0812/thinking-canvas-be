@@ -1,6 +1,6 @@
 ---
 last-verified: 2026-07-05
-verified-against: thinking-canvas-api src/routes/* + types/index.ts (actual implemented code, not design docs)
+verified-against: thinking-canvas-api src/routes/* + src/streaming/* + src/pipeline/* + src/agents/*.ts prompts + types/index.ts (actual implemented code, not design docs)
 stale-after-days: 30
 ---
 
@@ -88,9 +88,12 @@ type RedisMessage =
 ```
 
 Protocol sequence per ghost pair: `spawn` → *(~1.5s gap for your animation)* →
-`chunk`* (context node) → `chunk`* (question node, if present) → `done`.
+`chunk`* → `done`. **Every `chunk` targets `context_node.ghost_id`** — the
+backend streams the agent's raw output (one stream, markers included) and never
+targets the question node or strips markers. The frontend parses `[NODE_TYPE:]`
+/ `[QUESTION]` / `[ARTICULATION n]` out of that stream itself (Known Gap #6).
 The 1.5s gap is a real backend sleep — animate the empty frames during it.
-Full frontend handling in `GHOST-STREAMING.md`.
+Full frontend handling + the marker grammar in `GHOST-STREAMING.md`.
 
 ### `POST /api/ghost-status`
 
@@ -182,6 +185,9 @@ needs a backend change; frontend stories that hit one must flag it, not fudge it
 | 3 | Canvas events are create-only — no update/delete/re-parent | Backend agents read stale canvas after edits or deletes | Backend intervention-spectrum task-06 extends the event surface |
 | 4 | No endpoint to initiate Stripe checkout — only the webhook exists | Upgrade flow can't start a subscription | Use Stripe Payment Links short-term, or backend adds a checkout route |
 | 5 | Accepted-ghost enrichment undecided — if the frontend persists an accepted ghost as an `owner:'ai'` node without firing `canvas-event` (correct: the pipeline must not react to its own output), that node never gets a summary/embedding | AI nodes are second-class in later semantic recall | Needs a backend decision (e.g. enrich on ghost-status accept) |
+| 6 | **Ghost content is delivered as one raw stream on `context_node.ghost_id`, markers and all** — `[NODE_TYPE:]`/`[QUESTION]`/`[ARTICULATION n]` are not stripped and the question node is never streamed to. The backend's intended server-side split (`src/streaming/tokens.ts`) was never implemented | Frontend must parse markers and route the question text itself, or it renders raw markup + an empty question node | Backend should split server-side (emit a typed `node_type` message + route post-`[QUESTION]` chunks to the question ghost). Until then, frontend parses — see GHOST-STREAMING.md → Content Delivery |
+| 6b | **The SSE connection closes after every `done`** (`src/routes/stream.ts` resolves on first `done`) → reconnect after every ghost; pub/sub has no replay, so a `spawn` in the reconnect window is lost and overlapping generations truncate each other | Not every triggered agent yields a visible ghost; concurrent Expander+Articulator can collide | Backend should hold the connection open until client abort (`done` becomes informational) |
+| 7 | **Tier enforcement is inconsistent backend-side:** question edges fire the Outer Subconscious with **no tier check** (`outer-sub-pipeline.ts`), while the debounced Expander/Stress-Tester path *is* tier-gated. So a **free** user drawing a question edge gets an Outer-Sub ghost | A tier-driven `UpgradePrompt` on question edges would be wrong; the FE can't derive "which agents can fire" from tier alone | Backend should gate the immediate pipelines by tier too (or intentionally make Outer-Sub free — then document it) |
 
 ---
 

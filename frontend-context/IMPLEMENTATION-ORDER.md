@@ -57,6 +57,9 @@ contract impact, and definition of done.
 | #3 create-only canvas events | edit/delete fidelity (stories 3+) | backend intervention-spectrum task-06; frontend just leaves seam comments |
 | #4 no checkout endpoint | story 10 | v1 = Stripe Payment Link |
 | #5 accepted-ghost enrichment undecided | story 6 (quality, not blocking) | needs a backend decision; document in PR |
+| #6 raw markers on one stream (context ghost only) | **story 5** — the ghost store must parse `[NODE_TYPE:]`/`[QUESTION]`/`[ARTICULATION]` and route the question text itself | build the parser now (GHOST-STREAMING → Content Delivery); a backend server-side split would later simplify it |
+| #6b SSE closes after every `done` | story 5 (reconnect is normal; overlapping ghosts truncate) | tolerate reconnect-per-ghost; flag backend hold-open |
+| #7 free tier still gets Outer-Sub on question edges | story 10 (UpgradePrompt logic) | don't gate the question-edge UI on tier until backend gates the pipeline |
 
 ---
 

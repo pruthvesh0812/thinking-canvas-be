@@ -45,7 +45,9 @@ MODIFY:
   the metadata either way.
 - Accept: Supabase inserts for accepted node(s)+edge(s), owner:'ai', **no
   canvas-event fired** (the pipeline must not react to its own output —
-  Known Gap #5 documents the enrichment consequence).
+  Known Gap #5 documents the enrichment consequence). Persist the store's
+  **parsed** `contextText` / `questionText` (markers stripped) — never the raw
+  stream (Known Gap #6, GHOST-STREAMING → Content Delivery).
 - Reject: reason is mandatory UI; backend defaults to skip_for_now if omitted.
 
 ## Risks

@@ -44,6 +44,13 @@ MODIFY:
 - Handles `spawn`/`chunk`/`done`/`ping`; unknown types logged + ignored
   (forward-compat non-negotiable #10).
 - Rendering derives strictly from SpawnDescriptor (non-negotiable #3).
+- ⚠ **Known Gap #6:** every `chunk` targets `context_node.ghost_id` and carries
+  RAW agent text with `[NODE_TYPE:]`/`[QUESTION]`/`[ARTICULATION]` markers. The
+  store must buffer + parse (markers split across chunks) and route the question
+  text into the question frame itself — the backend never streams the question
+  node separately. See GHOST-STREAMING.md → Content Delivery.
+- ⚠ **Known Gap #6b:** the connection closes after every `done` (reconnect is
+  routine); discard any un-`done` pair after a reconnect.
 
 ## Risks
 - The 1.5s spawn→chunk window is the animation budget — an entrance animation
@@ -54,10 +61,14 @@ MODIFY:
 
 ## Definition of Done
 Create a node, pause ~10s → debounce dot shows → ghost frames animate in →
-text streams token-by-token into the correct ghost (context first, then
-question) → `done` marks the pair streamed. Question edge produces an
-immediate pair with no debounce wait. A second spawn on the same node replaces
-the first pair.
+raw stream arrives on the context ghost id and the store parses it: `[NODE_TYPE:]`
+sets the context node's type, context text fills the context node, and the text
+after `[QUESTION]` fills the **question** node (no markers visible anywhere) →
+`done` marks the pair streamed. An Articulator pair (existing-nodes edge) renders
+its `[ARTICULATION n]` options in the single context node, no question node.
+Question edge produces an immediate pair with no debounce wait. A second spawn on
+the same node replaces the first pair. A mid-stream reconnect discards the
+partial pair rather than showing a stub.
 
 ## Task Breakdown
 NONE — implement directly from this story.

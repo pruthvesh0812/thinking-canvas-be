@@ -1,6 +1,6 @@
 ---
 last-verified: 2026-07-05
-verified-against: backend CANVAS-SYNC.md (2026-06-08) + src/streaming/spawn.ts + src/streaming/tokens.ts + src/routes/stream.ts
+verified-against: backend src/streaming/tokens.ts + src/streaming/spawn.ts + src/routes/stream.ts + src/agents/*.ts prompt constants + all three streaming pipelines (read line-by-line — NOT the backend design docs, which describe an unimplemented server-side split)
 stale-after-days: 30
 ---
 
@@ -16,20 +16,33 @@ stale-after-days: 30
 One `EventSource` per active session. Every ghost pair arrives as this sequence:
 
 ```
-spawn ──1.5s──▶ chunk* (context node) ──▶ chunk* (question node) ──▶ done
+spawn ──1.5s──▶ chunk* ──▶ done
+                  └─ EVERY chunk targets context_node.ghost_id (see below).
+                     There is NO separate stream for the question node.
 ```
 
-The 1.5s gap is a deliberate backend sleep (`inngest.sleep('ghost-animation')`)
+The 1.5s gap is a deliberate backend sleep (`step.sleep('ghost-animation','1500ms')`)
 — it exists so the frontend can animate empty ghost frames onto the canvas
 before text starts arriving. Use it.
 
 ```typescript
 type RedisMessage =
   | { type: 'spawn'; descriptor: SpawnDescriptor }
-  | { type: 'chunk'; target: string; data: string }   // target = ghost_id
+  | { type: 'chunk'; target: string; data: string }   // target = ALWAYS the context ghost_id
   | { type: 'done' }
   | { type: 'ping' }                                   // keepalive — ignore
 ```
+
+> ⚠️ **The single most important thing on this page.** The backend streams the
+> agent's **raw output** — one stream, all chunks tagged with
+> `context_node.ghost_id` — and that raw text contains inline control markers
+> (`[NODE_TYPE: …]`, `[QUESTION]`, `[ARTICULATION n]`). The question node is
+> **never** streamed to separately, and the markers are **never** stripped
+> server-side. The frontend parses the markers and routes the text itself. This
+> is verified against `src/streaming/tokens.ts` (`streamAgentOutput` publishes
+> every token to a single ghost id) — the backend's own design comments describe
+> a server-side split that **was never implemented**. See "Content Delivery"
+> below and API-CONTRACT Known Gap #6.
 
 ---
 
@@ -63,11 +76,61 @@ On `spawn` the frontend:
    node → render at full opacity with no reject button (the sole exception).
 4. Start the ghost-frame entrance animation (~the 1.5s window).
 
-On `chunk`: append `data` to the ghost node whose `ghost_id === target`.
-Tokens arrive in order per target; context streams fully before question starts.
+On `chunk`: `target` is **always** `context_node.ghost_id`. Append `data` to the
+pair's accumulating raw buffer, then re-derive the split (context text, question
+text, node type) from that buffer — see "Content Delivery" next. Do **not** look
+up a node by `target` and render `data` verbatim: that paints raw markers and
+leaves the question node forever empty.
 
 On `done`: mark the pair streamed — enable the accept/reject controls.
 (Controls before `done` would let the user judge a half-streamed thought.)
+
+---
+
+## Content Delivery — One Raw Stream, You Parse the Markers
+
+The `node_type` in the SpawnDescriptor is only a **pre-assigned default** (the
+backend mints it before the agent runs). The real node type and the context /
+question split live in the streamed text as markers. Grammar, verified from the
+agent prompt constants in `src/agents/*.ts`:
+
+```
+[NODE_TYPE: reframe|mirror|pattern|reference|contradiction|appreciation]
+<context paragraph>
+[QUESTION]
+<question sentence>
+```
+
+- **Expander / Stress-Tester / Outer Subconscious** emit the above.
+  `[QUESTION]` is present except for a rare Expander `appreciation` (no question).
+- **Articulator** emits **no `[QUESTION]`**; instead its body is 2–3 options:
+  ```
+  [NODE_TYPE: …]
+  [ARTICULATION 1]
+  <one reading>
+  [ARTICULATION 2]
+  <another reading>
+  [ARTICULATION 3]   (optional)
+  <a third>
+  ```
+  Render these as selectable options inside the single context node — there is
+  no question node for the Articulator.
+
+**Parsing rules (do this in the ghost store's `appendChunk`, not in components):**
+1. **Buffer, then parse.** Markers can be split across chunk boundaries
+   (`"[QUEST"` + `"ION]"`). Accumulate the raw stream per pair and re-parse the
+   whole buffer on each chunk — never regex a single `data` payload.
+2. `[NODE_TYPE: x]` → set the context node's rendered type to `x` (this
+   **overrides** the descriptor default). Strip the marker line from display.
+3. Text after the `[NODE_TYPE]` line and before `[QUESTION]` → **context** node.
+4. Text after `[QUESTION]` → **question** node (render it into
+   `question_node.ghost_id`'s frame — which you created from the descriptor at
+   `spawn`, not from any chunk `target`).
+5. Never show a partial marker (e.g. a trailing `"["`) as ghost text — hold
+   incomplete bracket sequences in the buffer until they resolve.
+
+The persisted, accept-time content is this parsed text with markers stripped
+(context text → the `owner:'ai'` context node; question text → the question node).
 
 ---
 
@@ -86,6 +149,7 @@ export function useGhostStream(sessionId: string | null) {
       const msg = JSON.parse(e.data) as RedisMessage
       switch (msg.type) {
         case 'spawn': useGhostStore.getState().spawn(msg.descriptor); break
+        // target is always the context ghost id; the store buffers + parses (markers → context/question split)
         case 'chunk': useGhostStore.getState().appendChunk(msg.target, msg.data); break
         case 'done':  useGhostStore.getState().markDone(); break
         case 'ping':  break
@@ -107,6 +171,15 @@ export function useGhostStream(sessionId: string | null) {
 - `EventSource` reconnects automatically on drop — don't hand-roll retry loops.
   A pair that was mid-stream during a drop is lost; the ghost store should
   discard any pair still un-`done` after a reconnect rather than show a stub.
+- **The backend closes the connection after every `done`** (verified in
+  `src/routes/stream.ts` — the handler resolves on the first `done`). So a
+  reconnect is routine, not an error, and it happens after *every* ghost — treat
+  `onerror`/reconnect as normal flow. Upstash pub/sub has **no replay**, so any
+  `spawn` published during the reconnect window is lost; and two generations that
+  overlap on one session (a debounced Expander + an immediate Articulator) will
+  see the first `done` cut the second short. This is a backend wart
+  (API-CONTRACT Known Gap #6b) — until it's fixed, don't assume every triggered
+  agent produces a visible ghost.
 - The backend sends `ping` every 25s; silence much longer than that means the
   connection is dead even if the browser hasn't noticed.
 
@@ -151,8 +224,11 @@ UI, not decoration.
 // of the data structure instead of being checked imperatively.
 type GhostPairState = {
   descriptor: SpawnDescriptor
-  contextText: string
-  questionText: string
+  raw: string                              // accumulated stream (markers included)
+  nodeType: ContextNodeType                // starts = descriptor default, overridden by [NODE_TYPE:]
+  contextText: string                      // parsed from raw — markers stripped
+  questionText: string                     // parsed from raw (text after [QUESTION])
+  articulations?: string[]                 // Articulator only — parsed [ARTICULATION n] sections
   streamed: boolean                        // set by done — gates the controls
   meta?: { thread_id: string; turn_index: number }  // pending Known Gap #1
 }
@@ -160,6 +236,8 @@ type GhostPairState = {
 type GhostStore = {
   pairs: Record<string, GhostPairState>    // key = trigger_node_id
   spawn(d: SpawnDescriptor): void          // replaces existing pair for the node
+  // target is always the context ghost id; appendChunk pushes onto `raw` then
+  // re-parses raw → { nodeType, contextText, questionText, articulations }.
   appendChunk(ghostId: string, data: string): void
   markDone(): void
   resolve(triggerNodeId: string): void     // remove after accept/reject completes
@@ -175,6 +253,11 @@ type GhostStore = {
 // ❌ Never render ghost layout from anything but the SpawnDescriptor
 // ❌ Never let chunks create nodes — a chunk whose target has no spawned
 //    frame is a protocol error: log it, drop it
+// ❌ Never render chunk `data` verbatim — it carries [NODE_TYPE:]/[QUESTION]/
+//    [ARTICULATION] markers; parse them out (Content Delivery) or the user sees
+//    raw markup and the question node stays empty
+// ❌ Never wait for chunks targeting the question ghost id — they never come;
+//    the question text is parsed out of the context stream
 // ❌ Never auto-accept, auto-reject, or fade a ghost on a timer
 // ❌ Never open more than one EventSource per session
 // ❌ Never throw on an unknown SSE message type

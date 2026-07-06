@@ -133,9 +133,11 @@ Edge: { id, canvas_id, session_id, from_node_id, to_node_id,
 
 ## The Debounce Contract (what the frontend shows)
 
-The backend fires agents on **pauses**, not on every event (default 10s window,
-velocity-adaptive after 5 nodes, min 8s / max 25s). Two triggers bypass it and
-fire immediately: question edges, and edges between existing nodes.
+The backend fires agents on **pauses**, not on every event (a fixed **10s**
+window per session today — the velocity-adaptive 8–25s model is designed but
+not yet implemented in the backend, so don't tie the indicator to it). Two
+triggers bypass the debounce and fire immediately: question edges, and edges
+between existing nodes.
 
 Frontend's job: show the `DebounceIndicator` (subtle pulsing dot near the last
 active node) while a window is plausibly open — "AI is reading what you just
@@ -176,3 +178,9 @@ Details and data sources in `SESSION-FLOWS.md`.
 Enforcement is **server-side** in the backend Orchestrator. The frontend reads
 `subscriptions` only to decide what UI to show — e.g. `UpgradePrompt` when a
 Pro-only agent would have fired.
+
+> ⚠️ Tier gating is currently **inconsistent** backend-side: the immediate
+> question-edge pipeline (Outer Subconscious) is **not** tier-checked, so a free
+> user drawing a question edge does get an Outer-Sub ghost today. Don't gate the
+> question-edge affordance or show an `UpgradePrompt` for it based on tier — see
+> API-CONTRACT Known Gap #7.
