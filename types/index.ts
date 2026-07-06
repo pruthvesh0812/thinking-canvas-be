@@ -94,6 +94,11 @@ export type Node = {
 // match, instead of over-fetching every column for every node on the canvas.
 export type CanvasMapNode = Pick<Node, 'id' | 'session_id' | 'summary' | 'direction_marker'>
 
+// The judge reads the canvas map with COMPLETE content — maturity preconditions
+// live in the wording of nodes, which summaries lose (DESIGN §4b). Still excludes
+// the embedding column, which no map ever renders.
+export type JudgeMapNode = CanvasMapNode & Pick<Node, 'content'>
+
 export type Edge = {
   id: string
   canvas_id: string

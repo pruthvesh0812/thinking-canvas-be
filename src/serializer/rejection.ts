@@ -61,34 +61,63 @@ export async function buildRejectionBlock(canvas_id: string, agentRole: AgentRol
   const insights = await getActiveByCanvas(canvas_id)
   if (insights.length === 0) return ''
 
-  const contentInsights = insights.filter(i => i.target_edge_id === null)
-  const connectionInsights = insights.filter(i => i.target_edge_id !== null)
+  const { content, connection, connectionCount } = buildCategoryBlocks(insights)
 
   const blocks: string[] = []
+  if (content) blocks.push(content)
 
-  if (contentInsights.length > 0) {
-    blocks.push(renderBlock(
-      'NEGATIVE CONSTRAINTS (active — do not violate):',
-      contentInsights,
-      i => REASON_LABEL[i.rejection_reason ?? ''] ?? i.rejection_reason ?? '',
-    ))
-  }
-
-  if (connectionInsights.length > 0) {
+  if (connection) {
     if (agentRole === 'observer') {
-      blocks.push(renderBlock(
-        'OBSERVER CONNECTION FEEDBACK (active — do not repeat these connections):',
-        connectionInsights,
-        i => CONNECTION_REASON_LABEL[i.connection_feedback ?? ''] ?? i.connection_feedback ?? '',
-      ))
+      blocks.push(connection)
     } else {
       logger.warn('[serializer:rejection] dropping connection insights for non-observer role', {
         canvas_id,
         agentRole,
-        count: connectionInsights.length,
+        count: connectionCount,
       })
     }
   }
 
   return blocks.join('\n\n')
+}
+
+// The judge dedups candidate moves against the FULL active insight set — never
+// re-offer a refusal (DESIGN §4b). Both categories apply: content NEGATIVE
+// CONSTRAINTS, and connection feedback too (an Articulator offer that names a
+// connection the user already rejected between the same two nodes is a re-offer).
+export async function buildFullRejectionBlock(canvas_id: string): Promise<string> {
+  const insights = await getActiveByCanvas(canvas_id)
+  if (insights.length === 0) return ''
+
+  const { content, connection } = buildCategoryBlocks(insights)
+  return [content, connection].filter((b): b is string => b !== null).join('\n\n')
+}
+
+// Renders each insight category into its prompt block (null when the category is
+// empty). Callers decide which categories their agent may see.
+function buildCategoryBlocks(insights: RejectionInsight[]): {
+  content: string | null
+  connection: string | null
+  connectionCount: number
+} {
+  const contentInsights = insights.filter(i => i.target_edge_id === null)
+  const connectionInsights = insights.filter(i => i.target_edge_id !== null)
+
+  return {
+    content: contentInsights.length > 0
+      ? renderBlock(
+          'NEGATIVE CONSTRAINTS (active — do not violate):',
+          contentInsights,
+          i => REASON_LABEL[i.rejection_reason ?? ''] ?? i.rejection_reason ?? '',
+        )
+      : null,
+    connection: connectionInsights.length > 0
+      ? renderBlock(
+          'OBSERVER CONNECTION FEEDBACK (active — do not repeat these connections):',
+          connectionInsights,
+          i => CONNECTION_REASON_LABEL[i.connection_feedback ?? ''] ?? i.connection_feedback ?? '',
+        )
+      : null,
+    connectionCount: connectionInsights.length,
+  }
 }

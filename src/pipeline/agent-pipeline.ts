@@ -5,13 +5,13 @@ import { getAvailableAgents } from '../lib/tier.js'
 import { buildSpawnDescriptor, publishSpawn } from '../streaming/spawn.js'
 import { streamAgentOutput, publishDone } from '../streaming/tokens.js'
 import { runAttunement } from '../agents/attunement.js'
-import { routeWithOrchestrator } from '../agents/orchestrator.js'
+import { runJudge } from '../agents/orchestrator.js'
 import { streamExpander } from '../agents/expander.js'
 import { streamStressTester } from '../agents/stress-tester.js'
-import { serialize } from '../serializer/index.js'
+import { serialize, serializeJudgeContext } from '../serializer/index.js'
 import { getRecentNodes } from '../db/nodes.js'
 import { getCanvas } from '../db/canvases.js'
-import { getSession } from '../db/sessions.js'
+import { getSession, maybeAdvancePhase } from '../db/sessions.js'
 import { getTierByUser } from '../db/subscriptions.js'
 import { getOrCreateThread, appendMessage } from '../db/threads.js'
 import { getActiveByCanvas, decrementTurnsRemaining } from '../db/rejection-insights.js'
@@ -45,10 +45,11 @@ function isStreamable(role: AgentRole): role is StreamableRole {
 //   2. Guard (canAgentFire) — if a ghost pair from an earlier turn is still
 //      pending the user's accept/reject, drop this run silently. Only one
 //      ghost can be "in flight" per trigger node at a time.
-//   3. Orchestrator picks which agent (if any) should respond, given the
-//      Attunement signals, the session phase, and the agents the user's tier
-//      unlocks. If it lands on Articulator/Outer-Sub/Observer here, there is
-//      nothing to stream in THIS pipeline — those have their own triggers.
+//   3. The judge (the repurposed Orchestrator — DESIGN §4b) advances the
+//      session phase (task-02 latch), then rules maturity + single-best route
+//      in one call over the FULL canvas map. Not mature → silent no-pipeline.
+//      Tier-locked best → hold for an upgrade offer, never substitute weaker.
+//      (The decide→wait→generate handshake replaces steps 4+ in task-04.)
 //   4. A SpawnDescriptor with pre-assigned ghost ids is built and published to
 //      Redis so the frontend can render placeholder ghost frames immediately,
 //      before any real content exists.
@@ -116,49 +117,75 @@ export const agentPipeline = inngest.createFunction(
       return
     }
 
-    // ── Step 3: Orchestrator decides which agent responds, given Attunement ─
-    // signals, session phase, and the agents the user's tier unlocks
-    // (getAvailableAgents enforces tier limits server-side, never client-trusted).
-    const route = await step.run('orchestrator', async () => {
+    // ── Step 3: The judge — maturity + single-best routing in one call over ─
+    // the FULL canvas map (complete content). Phase advances first via the
+    // task-02 latch: a confident Attunement shift is what unlocks converging —
+    // and with it the Stress-Tester. Tier stays server-side (getAvailableAgents
+    // feeds the judge's tier_locked flag, never a client claim).
+    const decision = await step.run('judge', async () => {
       const canvas = await getCanvas(canvas_id)
       const session = await getSession(session_id)
       const tier = await getTierByUser(canvas.user_id)
       const available = getAvailableAgents(tier)
-      return routeWithOrchestrator({
+      const phase = await maybeAdvancePhase(session, {
+        phase_shift_suggested: attunement.phase_shift_suggested,
+        confidence: attunement.confidence,
+      })
+      const judgeContext = await serializeJudgeContext(canvas, node_id)
+      return runJudge({
         canvas_id,
+        session_id,
+        trigger_node_id: node_id,
+        phase,
         attunement: {
           cognitive_mode: attunement.cognitive_mode,
           question_style: attunement.question_style,
           phase_shift_suggested: attunement.phase_shift_suggested,
           confidence: attunement.confidence,
         },
-        signals: {
-          phase: session.current_phase,
-          last_action: 'node_created',
-        },
+        serialized_context: judgeContext,
         available_agents: available,
       })
     })
-    logger.info('[pipeline:agent] step:orchestrator routed', {
+    logger.info('[pipeline:agent] step:judge ruled', {
       canvas_id,
       session_id,
       node_id,
-      route: route.route,
-      question_style: route.question_style,
+      mature: decision.mature,
+      route: decision.route,
+      tier_locked: decision.tier_locked,
+      confidence: decision.confidence,
     })
 
-    // The Articulator/Outer-Sub/Observer routes are handled by their own
-    // pipelines or run only at session complete. If the Orchestrator lands on
-    // one of those here, there is nothing to stream — drop silently.
-    if (!isStreamable(route.route)) {
-      logger.info('[pipeline:agent] non-streamable route — no ghost', {
+    // Not mature → silent "no pipeline". Nothing is shown, nothing is spent.
+    if (!decision.mature || decision.route === null) {
+      return
+    }
+
+    // Tier-locked best: never substitute a weaker agent (§4b). The upgrade
+    // offer surfaces on the sidebar card at show time (task-07) — until that
+    // surface exists, hold silently.
+    if (decision.tier_locked) {
+      logger.info('[pipeline:agent] tier-locked route — upgrade offer, no generation', {
         canvas_id,
         node_id,
-        route: route.route,
+        route: decision.route,
       })
       return
     }
-    const agentRole = route.route
+
+    // The Articulator/Outer-Sub proactive paths land with the handshake
+    // (task-04); their explicit-edge pipelines still run independently. Until
+    // then this pipeline only streams the two ghost-pair agents.
+    if (!isStreamable(decision.route)) {
+      logger.info('[pipeline:agent] non-streamable route — no ghost', {
+        canvas_id,
+        node_id,
+        route: decision.route,
+      })
+      return
+    }
+    const agentRole = decision.route
 
     // ── Step 4: Build a SpawnDescriptor (pre-assigned ghost ids for the ────
     // context node + question node) and publish a SPAWN message so the

@@ -7,7 +7,7 @@ import { articulatorAgent } from './agents/articulator.js'
 import { outerSubconsciousAgent } from './agents/outer-subconscious.js'
 import { attunementAgent } from './agents/attunement.js'
 import { observerAgent } from './agents/observer.js'
-import { orchestratorAgent } from './agents/orchestrator.js'
+import { judgeAgent } from './agents/orchestrator.js'
 
 // Registering agents here (rather than calling them as bare Agent instances)
 // is what makes Mastra's auto-instrumentation trace their .stream()/.generate()
@@ -22,7 +22,7 @@ export const mastra = new Mastra({
     outerSubconscious: outerSubconsciousAgent,
     attunement: attunementAgent,
     observer: observerAgent,
-    orchestrator: orchestratorAgent,
+    judge: judgeAgent,
   },
   observability: new Observability({
     configs: {

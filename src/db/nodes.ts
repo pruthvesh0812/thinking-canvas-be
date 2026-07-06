@@ -1,5 +1,5 @@
 import { db } from './client.js'
-import type { Node, DirectionMarker, CanvasMapNode } from '../../types/index.js'
+import type { Node, DirectionMarker, CanvasMapNode, JudgeMapNode } from '../../types/index.js'
 
 // Backend READS nodes only — frontend writes user nodes directly to Supabase.
 
@@ -54,6 +54,20 @@ export async function getAllByCanvas(canvas_id: string): Promise<CanvasMapNode[]
 
   if (error) throw new Error(`getAllByCanvas failed: ${error.message}`)
   return (data ?? []) as CanvasMapNode[]
+}
+
+// The judge's map source — every node on the canvas with COMPLETE content,
+// oldest first. Maturity preconditions live in the wording of nodes, which
+// summaries lose (DESIGN §4b); still skips the embedding column no map renders.
+export async function getAllByCanvasWithContent(canvas_id: string): Promise<JudgeMapNode[]> {
+  const { data, error } = await db
+    .from('nodes')
+    .select('id, session_id, content, summary, direction_marker')
+    .eq('canvas_id', canvas_id)
+    .order('created_at', { ascending: true })
+
+  if (error) throw new Error(`getAllByCanvasWithContent failed: ${error.message}`)
+  return (data ?? []) as JudgeMapNode[]
 }
 
 export async function getNodesBySession(
