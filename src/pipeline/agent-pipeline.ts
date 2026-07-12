@@ -5,6 +5,7 @@ import { getAvailableAgents } from '../lib/tier.js'
 import { buildSpawnDescriptor, publishSpawn } from '../streaming/spawn.js'
 import { streamAgentOutput, publishDone } from '../streaming/tokens.js'
 import { publishWaiting, publishOffer, publishWithdraw } from '../streaming/offer.js'
+import { decideDirectness, authorHeadline, upgradeHeadline, checkImpact, IMPACT_WARNING } from '../lib/intervention.js'
 import { runAttunement } from '../agents/attunement.js'
 import { runJudge } from '../agents/orchestrator.js'
 import { streamExpander } from '../agents/expander.js'
@@ -167,11 +168,31 @@ export const agentPipeline = inngest.createFunction(
 
     if (!decision.mature || decision.route === null) return
 
-    // Tier-locked best: upgrade offer surfaces at show (task-07). No substitution.
+    // Tier-locked best: never substitute a weaker agent (§4b) — surface an
+    // upgrade offer on the sidebar card instead. No wait/generate; the offer
+    // goes straight to 'shown' since there is nothing to time out on.
     if (decision.tier_locked) {
-      logger.info('[pipeline:agent] tier-locked — upgrade offer, no generation', {
+      await step.run('upgrade-offer', async () => {
+        const seq = await allocateSeq(session_id)
+        const created = await createOffer({
+          id: offer_id,
+          canvas_id,
+          session_id,
+          agent_role: decision.route as AgentRole,
+          trigger_node_id: node_id,
+          anchor_node_ids: decision.locus_node_ids,
+          seq,
+          context_fingerprint: canvasAtJudge.canvas_version.toString(),
+        })
+        const directness = decideDirectness('thinking')
+        const headline = upgradeHeadline()
+        await updateOfferStatus(created.id, 'shown', { directness, headline })
+        await publishOffer(session_id, { ...created, status: 'shown', directness, headline })
+      })
+      logger.info('[pipeline:agent] tier-locked — upgrade offer surfaced', {
         canvas_id,
         node_id,
+        offer_id,
         route: decision.route,
       })
       return
@@ -240,6 +261,11 @@ export const agentPipeline = inngest.createFunction(
       timeout: '10m',
       match: 'data.offer_id',
     })
+
+    // Attention state for the show ruleset (§5): 'manual' means the user hit
+    // "process now" or explicitly resumed a paused timer — they were watching.
+    // A natural 'lapse' means the timer ran out on its own — subtle by default.
+    const attentionState = go?.data?.reason === 'manual' ? 'waiting' : 'thinking'
 
     if (!go) {
       // Hard timeout — tab was abandoned. Expire + withdraw silently.
@@ -371,13 +397,18 @@ export const agentPipeline = inngest.createFunction(
     })
 
     // ── Step 8: Show + finalize ────────────────────────────────────────────
-    // directness is stubbed as 'direct' — task-07 implements the show ruleset
-    // (directness × in-view → glow intensity / sidebar card).
+    // Show ruleset (§5): directness = f(attention state, show-rule) — this is
+    // the standard generate-at-show path, so the show-rule is 'standard' and
+    // attention state alone decides. Headline is backend-authored from the
+    // agent's own [NODE_TYPE:...] tag — only the backend knows what landed.
     await step.run('finalize', async () => {
       await publishDone(session_id)
 
-      await updateOfferStatus(offer.id, 'shown', { directness: 'direct' })
-      const shownOffer = { ...offer, status: 'shown' as const, directness: 'direct' as const }
+      const directness = decideDirectness(attentionState)
+      const headline = authorHeadline(responseText, DEFAULT_CONTEXT_TYPE[finalRoute])
+
+      await updateOfferStatus(offer.id, 'shown', { directness, headline })
+      const shownOffer = { ...offer, status: 'shown' as const, directness, headline }
       await publishOffer(session_id, shownOffer)
 
       const thread = await getOrCreateThread(canvas_id, finalRoute)
@@ -415,6 +446,51 @@ export const agentPipeline = inngest.createFunction(
       offer_id: offer.id,
       route: finalRoute,
       duration_ms: Date.now() - startedAt,
+    })
+  }
+)
+
+// ─────────────────────────────────────────────────────────────────────────
+// IMPACT PIPELINE — triggered by canvas/intervention.impact, which
+// canvas-event.ts fires on node.deleted / edge.deleted (DESIGN §6; matrix
+// rows 7-8: trigger=no, show=yes — a delete never spawns a new offer on its
+// own, it only checks whether an offer already in flight for this session is
+// now stale). Runs the Impact Check (fingerprint compare) and, on a material
+// change, warns the offer in place rather than withdrawing it outright.
+// ─────────────────────────────────────────────────────────────────────────
+export const interventionImpactPipeline = inngest.createFunction(
+  { id: 'intervention-impact', triggers: [{ event: 'canvas/intervention.impact' }] },
+  async ({ event, step }) => {
+    const { canvas_id, session_id, deleted_node_id } = event.data as {
+      canvas_id: string
+      session_id: string
+      deleted_node_id?: string
+      deleted_edge_id?: string
+    }
+
+    await step.run('warn-affected-offers', async () => {
+      const canvas = await getCanvas(canvas_id)
+      const inFlight = await getInFlightForSession(session_id)
+
+      for (const offer of inFlight) {
+        // Node deletes scope to offers actually anchored to the vanished node.
+        // Edge deletes can't be scoped this way (the row — and its endpoints —
+        // is already gone by the time this event fires), so they fall back to
+        // the coarse fingerprint check across every in-flight offer for the
+        // session. Over-warning is safe; under-warning is the risk (§6).
+        const anchored = deleted_node_id
+          ? offer.trigger_node_id === deleted_node_id || offer.anchor_node_ids.includes(deleted_node_id)
+          : true
+        if (!anchored) continue
+
+        const verdict = checkImpact(offer.context_fingerprint, canvas.canvas_version.toString())
+        if (verdict !== 'material') continue
+
+        const headline = offer.headline ? `${offer.headline} ${IMPACT_WARNING}` : IMPACT_WARNING
+        await updateOfferStatus(offer.id, offer.status, { headline })
+        await publishOffer(session_id, { ...offer, headline })
+        logger.info('[pipeline:impact] offer warned', { offer_id: offer.id, canvas_id, session_id })
+      }
     })
   }
 )
