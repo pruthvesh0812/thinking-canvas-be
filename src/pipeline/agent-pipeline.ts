@@ -5,7 +5,7 @@ import { getAvailableAgents } from '../lib/tier.js'
 import { buildSpawnDescriptor, publishSpawn } from '../streaming/spawn.js'
 import { streamAgentOutput, publishDone } from '../streaming/tokens.js'
 import { publishWaiting, publishOffer, publishWithdraw } from '../streaming/offer.js'
-import { decideDirectness, authorHeadline, upgradeHeadline, checkImpact, IMPACT_WARNING } from '../lib/intervention.js'
+import { decideDirectness, authorHeadline, upgradeHeadline, checkImpact, IMPACT_WARNING, timerMsFor } from '../lib/intervention.js'
 import { runAttunement } from '../agents/attunement.js'
 import { runJudge } from '../agents/orchestrator.js'
 import { streamExpander } from '../agents/expander.js'
@@ -13,7 +13,7 @@ import { streamStressTester } from '../agents/stress-tester.js'
 import { serialize, serializeJudgeContext } from '../serializer/index.js'
 import { getRecentNodes } from '../db/nodes.js'
 import { getCanvas } from '../db/canvases.js'
-import { getSession, maybeAdvancePhase } from '../db/sessions.js'
+import { getSession, maybeAdvancePhase, getReceptivity, applyReceptivityResponse } from '../db/sessions.js'
 import { getTierByUser } from '../db/subscriptions.js'
 import { getOrCreateThread, appendMessage } from '../db/threads.js'
 import { getActiveByCanvas, decrementTurnsRemaining } from '../db/rejection-insights.js'
@@ -248,10 +248,19 @@ export const agentPipeline = inngest.createFunction(
       })
     })
 
-    await step.run('publish-waiting', async () => {
-      await publishWaiting(session_id, offer)
+    const timerMs = await step.run('publish-waiting', async () => {
+      // Receptivity-tuned timer length (§4d/§8): 10s default, 5s on high readiness.
+      const { receptivity } = await getReceptivity(session_id)
+      const timer_ms = timerMsFor(receptivity)
+      await publishWaiting(session_id, offer, timer_ms)
+      return timer_ms
     })
-    logger.info('[pipeline:agent] step:waiting published', { session_id, offer_id: offer.id, seq: offer.seq })
+    logger.info('[pipeline:agent] step:waiting published', {
+      session_id,
+      offer_id: offer.id,
+      seq: offer.seq,
+      timer_ms: timerMs,
+    })
 
     // ── Step 5: Wait for go ────────────────────────────────────────────────
     // match: 'data.offer_id' compares the trigger event's offer_id to the
@@ -268,13 +277,21 @@ export const agentPipeline = inngest.createFunction(
     const attentionState = go?.data?.reason === 'manual' ? 'waiting' : 'thinking'
 
     if (!go) {
-      // Hard timeout — tab was abandoned. Expire + withdraw silently.
+      // Hard timeout — tab was abandoned. Expire + withdraw, and fold the
+      // "ignored" TIMING signal into receptivity — never rejection_insights (§8).
       await step.run('expire', async () => {
         await updateOfferStatus(offer.id, 'expired')
         await publishWithdraw(session_id, offer.id)
+        await applyReceptivityResponse(session_id, 'ignored')
       })
       logger.info('[pipeline:agent] offer expired (timeout)', { offer_id: offer.id, session_id })
       return
+    }
+
+    if (go.data?.reason === 'manual') {
+      await step.run('receptivity-manual', async () => {
+        await applyReceptivityResponse(session_id, 'manual')
+      })
     }
 
     // ── Step 6: Re-judge if canvas fingerprint changed during the wait ─────
@@ -397,14 +414,16 @@ export const agentPipeline = inngest.createFunction(
     })
 
     // ── Step 8: Show + finalize ────────────────────────────────────────────
-    // Show ruleset (§5): directness = f(attention state, show-rule) — this is
-    // the standard generate-at-show path, so the show-rule is 'standard' and
-    // attention state alone decides. Headline is backend-authored from the
-    // agent's own [NODE_TYPE:...] tag — only the backend knows what landed.
+    // Show ruleset (§5, §8): directness = f(attention state, show-rule,
+    // receptivity) — the standard generate-at-show path, re-read fresh since
+    // the wait may have just folded a 'manual' response into it. Headline is
+    // backend-authored from the agent's own [NODE_TYPE:...] tag — only the
+    // backend knows what landed.
     await step.run('finalize', async () => {
       await publishDone(session_id)
 
-      const directness = decideDirectness(attentionState)
+      const { receptivity } = await getReceptivity(session_id)
+      const directness = decideDirectness(attentionState, 'standard', receptivity)
       const headline = authorHeadline(responseText, DEFAULT_CONTEXT_TYPE[finalRoute])
 
       await updateOfferStatus(offer.id, 'shown', { directness, headline })

@@ -12,14 +12,27 @@ export type AttentionState = 'waiting' | 'thinking'
 // regardless of attention state.
 export type ShowRule = 'standard' | 'always_direct'
 
-// directness = f(attention state, show-rule) — DESIGN §5. waiting → direct
-// (they asked); thinking → subtle (protect the flow); a show-rule can force
-// direct regardless of state.
+// Receptivity — a small decayed aggregate of past offer-response TIMING
+// signals (§8). Neutral = 0.5; below LOW never shows direct no matter how
+// attentive the user looks right now (protects a recently-unreceptive user);
+// at/above HIGH shortens the processing timer (§4d: 10s default, 5s on high
+// readiness). This is a timing signal only — never write rejection_insights
+// from it; that channel is for content quality, not timing (§8's stated trap).
+const RECEPTIVITY_NEUTRAL = 0.5
+const LOW_RECEPTIVITY_THRESHOLD = 0.25
+const HIGH_RECEPTIVITY_THRESHOLD = 0.7
+
+// directness = f(attention state, show-rule, receptivity) — DESIGN §5 + §8.
+// waiting → direct (they asked); thinking → subtle (protect the flow); a
+// show-rule can force direct regardless of state; low receptivity overrides
+// everything back down to subtle.
 export function decideDirectness(
   state: AttentionState,
-  showRule: ShowRule = 'standard'
+  showRule: ShowRule = 'standard',
+  receptivity: number = RECEPTIVITY_NEUTRAL
 ): InterventionDirectness {
   if (showRule === 'always_direct') return 'direct'
+  if (receptivity < LOW_RECEPTIVITY_THRESHOLD) return 'subtle'
   return state === 'waiting' ? 'direct' : 'subtle'
 }
 
@@ -61,3 +74,45 @@ export function checkImpact(offerFingerprint: string, currentFingerprint: string
 }
 
 export const IMPACT_WARNING = 'This may not capture your latest change — regenerate?'
+
+// ─────────────────────────────────────────────────────────────────────────
+// Receptivity model (§8) — pure math only; src/db/sessions.ts owns the read
+// /write. Offer-response ≠ content-rejection: "process now" is engagement
+// with the OFFER'S TIMING, dismiss/ignore is "not now," never "bad idea."
+// Deliberately distinct from RejectionReason (types/index.ts) — nothing here
+// ever feeds rejection_insights.
+// ─────────────────────────────────────────────────────────────────────────
+export type ReceptivityResponse = 'manual' | 'dismissed' | 'ignored'
+
+// 6h half-life: decays a bad afternoon back toward neutral well before the
+// next session, so the aggregate reflects recent pattern, not a permanent grudge.
+const RECEPTIVITY_HALF_LIFE_HOURS = 6
+
+const RECEPTIVITY_DELTA: Record<ReceptivityResponse, number> = {
+  manual: 0.12,      // "process now" — actively pulled the offer forward
+  dismissed: -0.15,  // explicit dismiss — the timing itself was unwelcome
+  ignored: -0.1,     // hard-timeout (waitForEvent lapsed, tab abandoned) — no engagement at all
+}
+
+// Decays the stored score toward neutral based on elapsed time since the last
+// write, then applies this response's delta. Clamped to [0, 1].
+export function nextReceptivity(params: {
+  current: number
+  lastUpdatedAt: string
+  response: ReceptivityResponse
+  now?: Date
+}): number {
+  const elapsedHours =
+    ((params.now ?? new Date()).getTime() - new Date(params.lastUpdatedAt).getTime()) / 3_600_000
+  const decay = Math.pow(0.5, Math.max(0, elapsedHours) / RECEPTIVITY_HALF_LIFE_HOURS)
+  const decayed = RECEPTIVITY_NEUTRAL + (params.current - RECEPTIVITY_NEUTRAL) * decay
+  const next = decayed + RECEPTIVITY_DELTA[params.response]
+  return Math.min(1, Math.max(0, next))
+}
+
+// Read side — tunes the processing timer length (§4d: 10s default, 5s on
+// high readiness). The intensity side of "tunes intensity + timer length" is
+// decideDirectness's receptivity parameter above.
+export function timerMsFor(receptivity: number): number {
+  return receptivity >= HIGH_RECEPTIVITY_THRESHOLD ? 5000 : 10000
+}

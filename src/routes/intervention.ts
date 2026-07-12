@@ -5,6 +5,7 @@ import { inngest } from '../lib/inngest.js'
 import { logger } from '../lib/logger.js'
 import { getOffer, updateOfferStatus, getInFlightForSession } from '../db/intervention-offers.js'
 import { getCanvas } from '../db/canvases.js'
+import { applyReceptivityResponse } from '../db/sessions.js'
 import { checkImpact, IMPACT_WARNING } from '../lib/intervention.js'
 
 export const interventionRoute = new Hono()
@@ -102,7 +103,11 @@ interventionRoute.post('/intervention/dismiss', async (c) => {
   const { offer_id } = parsed.data
 
   try {
+    const offer = await getOffer(offer_id)
     await updateOfferStatus(offer_id, 'dismissed')
+    // Fold the "dismissed" TIMING signal into receptivity BEFORE the offer is
+    // purge-eligible (§4f, §8) — never rejection_insights; dismiss ≠ reject.
+    await applyReceptivityResponse(offer.session_id, 'dismissed')
     logger.info('[route:intervention] dismissed', { offer_id })
     return c.json({ ok: true })
   } catch (err) {

@@ -593,6 +593,8 @@ export type Database = {
           id: string
           latest_seq: number
           node_sequence: string[]
+          receptivity: number
+          receptivity_updated_at: string
           start_time: string
           status: string
         }
@@ -603,6 +605,8 @@ export type Database = {
           id?: string
           latest_seq?: number
           node_sequence?: string[]
+          receptivity?: number
+          receptivity_updated_at?: string
           start_time?: string
           status?: string
         }
@@ -613,6 +617,8 @@ export type Database = {
           id?: string
           latest_seq?: number
           node_sequence?: string[]
+          receptivity?: number
+          receptivity_updated_at?: string
           start_time?: string
           status?: string
         }

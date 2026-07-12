@@ -1,4 +1,5 @@
 import { db } from './client.js'
+import { nextReceptivity, type ReceptivityResponse } from '../lib/intervention.js'
 import type { AttunementState, Session, SessionPhase } from '../../types/index.js'
 
 // Hysteresis threshold for the diverging→converging latch: a confident/sustained
@@ -94,4 +95,48 @@ export async function maybeAdvancePhase(
 
   await updatePhase(session.id, 'converging')
   return 'converging'
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Receptivity (§8) — decayed offer-response TIMING aggregate. Read/write lives
+// here; the decay + delta math is pure in src/lib/intervention.ts. Never feeds
+// rejection_insights — dismiss/ignore means "not now," not "bad idea."
+// ─────────────────────────────────────────────────────────────────────────
+export async function getReceptivity(
+  session_id: string
+): Promise<{ receptivity: number; receptivity_updated_at: string }> {
+  const { data, error } = await db
+    .from('sessions')
+    .select('receptivity, receptivity_updated_at')
+    .eq('id', session_id)
+    .single()
+
+  if (error) throw new Error(`getReceptivity failed: ${error.message}`)
+  return data as { receptivity: number; receptivity_updated_at: string }
+}
+
+async function setReceptivity(session_id: string, receptivity: number): Promise<void> {
+  const { error } = await db
+    .from('sessions')
+    .update({ receptivity, receptivity_updated_at: new Date().toISOString() })
+    .eq('id', session_id)
+
+  if (error) throw new Error(`setReceptivity failed: ${error.message}`)
+}
+
+// Folds a single offer-response into the aggregate — called at each terminal
+// transition (dismiss, hard-timeout expire, "process now"), always BEFORE the
+// offer row becomes purge-eligible (§4f Retention). Returns the new score.
+export async function applyReceptivityResponse(
+  session_id: string,
+  response: ReceptivityResponse
+): Promise<number> {
+  const current = await getReceptivity(session_id)
+  const next = nextReceptivity({
+    current: current.receptivity,
+    lastUpdatedAt: current.receptivity_updated_at,
+    response,
+  })
+  await setReceptivity(session_id, next)
+  return next
 }

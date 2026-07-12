@@ -73,6 +73,8 @@ export type Session = {
   current_phase: SessionPhase
   node_sequence: string[]   // ordered node IDs created in THIS session only
   latest_seq: number        // monotonic version guard — latest intervention seq (§4e)
+  receptivity: number             // decayed offer-response aggregate, [0,1] (§8) — timing signal, never content
+  receptivity_updated_at: string  // last write, for the decay-toward-neutral calc
   start_time: string
   end_time: string | null
 }
@@ -306,7 +308,7 @@ export type InterventionOffer = {
 }
 
 export type RedisMessage =
-  | { type: 'waiting'; offer: InterventionOffer }    // "mature + pipeline waiting" — starts the timer (§4d)
+  | { type: 'waiting'; offer: InterventionOffer; timer_ms: number }  // "mature + pipeline waiting" — starts the timer (§4d); timer_ms is receptivity-tuned (§8)
   | { type: 'offer'; offer: InterventionOffer }      // low-intensity show — glow / sidebar card (§5)
   | { type: 'withdraw'; offer_id: string }           // supersede / no-longer-mature (§4e)
   | { type: 'spawn'; descriptor: SpawnDescriptor }

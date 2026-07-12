@@ -135,3 +135,39 @@ export async function getActiveOffersForSession(session_id: string): Promise<Int
   if (error) throw new Error(`getActiveOffersForSession failed: ${error.message}`)
   return (data ?? []) as InterventionOffer[]
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Purge (§4f Retention, §8) — the offer is ephemeral operational state; the
+// permanent "AI helped here" record lives on the thread (ghost_pair) + the
+// AiContribution audit, not here. Every caller must have already folded the
+// receptivity signal (src/db/sessions.ts → applyReceptivityResponse) BEFORE
+// the row disappears — these functions only delete.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Session close sweep — deletes every RESOLVED offer for the session. 'waiting'
+// rows are left alone; a still-parked run governs its own lifecycle via
+// step.waitForEvent's hard timeout (see purgeAbandonedWaiting for the fallback).
+export async function purgeResolvedForSession(session_id: string): Promise<void> {
+  const { error } = await db
+    .from('intervention_offers')
+    .delete()
+    .eq('session_id', session_id)
+    .neq('status', 'waiting')
+
+  if (error) throw new Error(`purgeResolvedForSession failed: ${error.message}`)
+}
+
+// Defensive TTL sweep for 'waiting' rows whose 10-minute waitForEvent timeout
+// should have already expired + deleted them but didn't (e.g. a crashed
+// worker never reached the 'expire' step). ttlMinutes is well past the
+// pipeline's own timeout so a row still legitimately in flight is never touched.
+export async function purgeAbandonedWaiting(ttlMinutes = 15): Promise<void> {
+  const cutoff = new Date(Date.now() - ttlMinutes * 60_000).toISOString()
+  const { error } = await db
+    .from('intervention_offers')
+    .delete()
+    .eq('status', 'waiting')
+    .lt('created_at', cutoff)
+
+  if (error) throw new Error(`purgeAbandonedWaiting failed: ${error.message}`)
+}
