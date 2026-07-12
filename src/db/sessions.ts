@@ -75,6 +75,20 @@ export async function updatePhase(
   if (error) throw new Error(`updatePhase failed: ${error.message}`)
 }
 
+// STUB — replaced by an atomic RPC in task-05 (concurrent Inngest workers
+// require a read-modify-write-in-DB guarantee, not a JS-side increment).
+// Bumps sessions.latest_seq and returns the new value.
+export async function allocateSeq(session_id: string): Promise<number> {
+  const session = await getSession(session_id)
+  const seq = session.latest_seq + 1
+  const { error } = await db
+    .from('sessions')
+    .update({ latest_seq: seq })
+    .eq('id', session_id)
+  if (error) throw new Error(`allocateSeq failed: ${error.message}`)
+  return seq
+}
+
 // v1 phase model = a ONE-WAY latch: diverging → converging, once. Re-divergence
 // (converging → diverging) is deferred to the branching era — see DESIGN.md §4c.
 // Flips only on a confident/sustained shift from Attunement (hysteresis), which is

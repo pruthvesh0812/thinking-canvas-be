@@ -13,6 +13,7 @@ import { streamRoute } from './routes/stream.js'
 import { ghostStatusRoute } from './routes/ghost-status.js'
 import { sessionRoute } from './routes/session.js'
 import { stripeRoute } from './routes/stripe.js'
+import { interventionRoute } from './routes/intervention.js'
 
 // Inngest pipeline functions
 import { agentPipeline } from './pipeline/agent-pipeline.js'
@@ -49,6 +50,7 @@ app.route('/api', streamRoute)
 app.route('/api', ghostStatusRoute)
 app.route('/api', sessionRoute)
 app.route('/api', stripeRoute)
+app.route('/api', interventionRoute)
 
 serve({ fetch: app.fetch, port: 3001 }, (info) => {
   logger.info('[server] listening', { port: info.port })

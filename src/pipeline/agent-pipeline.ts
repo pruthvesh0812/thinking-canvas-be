@@ -4,6 +4,7 @@ import { canAgentFire } from '../lib/guards.js'
 import { getAvailableAgents } from '../lib/tier.js'
 import { buildSpawnDescriptor, publishSpawn } from '../streaming/spawn.js'
 import { streamAgentOutput, publishDone } from '../streaming/tokens.js'
+import { publishWaiting, publishOffer, publishWithdraw } from '../streaming/offer.js'
 import { runAttunement } from '../agents/attunement.js'
 import { runJudge } from '../agents/orchestrator.js'
 import { streamExpander } from '../agents/expander.js'
@@ -11,21 +12,21 @@ import { streamStressTester } from '../agents/stress-tester.js'
 import { serialize, serializeJudgeContext } from '../serializer/index.js'
 import { getRecentNodes } from '../db/nodes.js'
 import { getCanvas } from '../db/canvases.js'
-import { getSession, maybeAdvancePhase } from '../db/sessions.js'
+import { getSession, maybeAdvancePhase, allocateSeq } from '../db/sessions.js'
 import { getTierByUser } from '../db/subscriptions.js'
 import { getOrCreateThread, appendMessage } from '../db/threads.js'
 import { getActiveByCanvas, decrementTurnsRemaining } from '../db/rejection-insights.js'
-import type { AgentRole, ContextNodeType, GhostPair } from '../../types/index.js'
+import { createOffer, updateOfferStatus } from '../db/intervention-offers.js'
+import type { AgentRole, AttunementState, ContextNodeType, GhostPair } from '../../types/index.js'
 
-// Agents the main debounced pipeline can route to. The Articulator and Outer
-// Subconscious have their own immediate pipelines; the Observer is not a
-// ghost-pair agent (it runs at session complete), so the streaming pipeline
-// only ever streams these two.
+// Agents the pipeline can route to. Articulator / Outer-Sub proactive paths land
+// in task-04; their explicit-edge pipelines still run independently. The Observer
+// is not a ghost-pair agent (content agent only) so it never appears here.
 type StreamableRole = Extract<AgentRole, 'expander' | 'stress_tester'>
 
-// Default context node type per streaming agent — the SpawnDescriptor needs a
-// type before the agent runs, since ghost IDs are pre-assigned. The agent's
-// own [NODE_TYPE:...] output drives the final rendered type on the frontend.
+// Default context node type per agent — pre-assigned before the agent runs so the
+// SpawnDescriptor can carry a type from the start. The agent's [NODE_TYPE:…] output
+// drives the final type rendered on the frontend.
 const DEFAULT_CONTEXT_TYPE: Record<StreamableRole, ContextNodeType> = {
   expander: 'reframe',
   stress_tester: 'contradiction',
@@ -35,61 +36,79 @@ function isStreamable(role: AgentRole): role is StreamableRole {
   return role === 'expander' || role === 'stress_tester'
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// MAIN PIPELINE — debounced 10s per session_id, triggered by every node the
-// user creates. A burst of rapid node creation collapses into a single run.
-//
-// Flow:
-//   1. Attunement reads the last few nodes and infers the user's cognitive
-//      mode/question style (a quick structured read, not a tool-using agent).
-//   2. Guard (canAgentFire) — if a ghost pair from an earlier turn is still
-//      pending the user's accept/reject, drop this run silently. Only one
-//      ghost can be "in flight" per trigger node at a time.
-//   3. The judge (the repurposed Orchestrator — DESIGN §4b) advances the
-//      session phase (task-02 latch), then rules maturity + single-best route
-//      in one call over the FULL canvas map. Not mature → silent no-pipeline.
-//      Tier-locked best → hold for an upgrade offer, never substitute weaker.
-//      (The decide→wait→generate handshake replaces steps 4+ in task-04.)
-//   4. A SpawnDescriptor with pre-assigned ghost ids is built and published to
-//      Redis so the frontend can render placeholder ghost frames immediately,
-//      before any real content exists.
-//   5. A short sleep gives the frontend time to finish that placeholder
-//      animation before real tokens start arriving.
-//   6. The chosen agent's thread is serialized into LLM context (rejection
-//      insights are folded in as NEGATIVE CONSTRAINTS inside serialize()).
-//   7. The agent streams its response; each token is forwarded to Redis so
-//      the ghost fills in live on the user's canvas as it's generated.
-//   8. On completion: publish DONE (closes the SSE stream's stream cue),
-//      persist the full response + ghost pair onto the thread, and tick down
-//      any active temporal-deferral rejection insights by one turn.
-// ─────────────────────────────────────────────────────────────────────────
-
-// Builds the recent-node text block the Attunement Layer reads (last 3-5 nodes,
-// most recent last). Read directly from Supabase — Attunement uses no cursor tool.
 function formatRecentNodesForAttunement(
   nodes: { summary: string | null; content: string | null; direction_marker: string | null }[]
 ): string {
-  // getRecentNodes returns newest-first; flip to oldest-first ("most recent last").
   return [...nodes]
     .reverse()
     .map((n, i) => `${i + 1}. [${n.direction_marker ?? '?'}] ${n.summary ?? n.content ?? ''}`)
     .join('\n')
 }
 
-export const agentPipeline = inngest.createFunction(
-  {
-    id: 'agent-pipeline',
-    debounce: { period: '10s', key: 'event.data.session_id' },
-    triggers: [{ event: 'canvas/node.created' }],
-  },
-  async ({ event, step }) => {
-    const { canvas_id, session_id, node_id } = event.data
-    const startedAt = Date.now()
-    logger.info('[pipeline:agent] start', { canvas_id, session_id, node_id })
+async function runJudgeStep(params: {
+  canvas_id: string
+  session_id: string
+  node_id: string
+  attunement: Pick<AttunementState, 'cognitive_mode' | 'question_style' | 'phase_shift_suggested' | 'confidence'>
+}) {
+  const canvas = await getCanvas(params.canvas_id)
+  const session = await getSession(params.session_id)
+  const tier = await getTierByUser(canvas.user_id)
+  const available = getAvailableAgents(tier)
+  const phase = await maybeAdvancePhase(session, {
+    phase_shift_suggested: params.attunement.phase_shift_suggested,
+    confidence: params.attunement.confidence,
+  })
+  const judgeContext = await serializeJudgeContext(canvas, params.node_id)
+  const decision = await runJudge({
+    canvas_id: params.canvas_id,
+    session_id: params.session_id,
+    trigger_node_id: params.node_id,
+    phase,
+    attunement: params.attunement,
+    serialized_context: judgeContext,
+    available_agents: available,
+  })
+  return { decision, canvas }
+}
 
-    // ── Step 1: Attunement reads the last 5 nodes and classifies HOW the user ─
-    // is thinking right now (cognitive_mode/question_style) — the Orchestrator
-    // consumes this next. No LLM tool calls; a single structured read.
+// ─────────────────────────────────────────────────────────────────────────
+// INTERVENTION PIPELINE — triggered by canvas/intervention.trigger, which the
+// frontend fires when its trigger ruleset passes (attention/action gate; DESIGN
+// §4a). No debounce here — the frontend owns the deferral timer.
+//
+// Flow (DESIGN §2, §4d, §4f):
+//   1. Attunement — infers cognitive_mode/question_style from the last 5 nodes.
+//   2. Guard — drops silently if a pending ghost is still in review.
+//   3. Judge — Attunement + full canvas-map → { mature, route }. Not mature →
+//      silent "no pipeline". Tier-locked best → upgrade offer, no substitution.
+//   4. Create offer (status='waiting') + publish 'waiting' over SSE — this is
+//      what starts the frontend's processing timer.
+//   5. waitForEvent('canvas/intervention.process', timeout 10m) — the frontend
+//      POSTs this when the timer lapses or the user hits "process now". On hard
+//      timeout (abandoned tab) → expire + withdraw.
+//   6. Re-judge if the canvas fingerprint (canvas_version) moved during the wait
+//      (user added/edited nodes). Unchanged → reuse cached route; changed →
+//      re-run Attunement + judge, or abort+withdraw if no longer mature.
+//   7. Generate — build SpawnDescriptor + publish spawn, sleep for animation,
+//      serialize thread, stream agent output token-by-token to Redis.
+//   8. Show (stub, task-07) — set directness='direct' + publish 'offer' SSE;
+//      publish DONE; persist ghost pair on thread.
+// ─────────────────────────────────────────────────────────────────────────
+
+export const agentPipeline = inngest.createFunction(
+  { id: 'intervention-pipeline', triggers: [{ event: 'canvas/intervention.trigger' }] },
+  async ({ event, step }) => {
+    const { canvas_id, session_id, node_id, offer_id } = event.data as {
+      canvas_id: string
+      session_id: string
+      node_id: string
+      offer_id: string
+    }
+    const startedAt = Date.now()
+    logger.info('[pipeline:agent] start', { canvas_id, session_id, node_id, offer_id })
+
+    // ── Step 1: Attunement ─────────────────────────────────────────────────
     const attunement = await step.run('attunement', async () => {
       const recentNodes = await getRecentNodes(canvas_id, 5)
       return runAttunement({
@@ -106,9 +125,7 @@ export const agentPipeline = inngest.createFunction(
       phase_shift_suggested: attunement.phase_shift_suggested,
     })
 
-    // ── Step 2: canAgentFire() guard — drop silently if a ghost pair from an ─
-    // earlier turn on this trigger node is still pending the user's review.
-    // Only one ghost may be "in flight" per trigger node at a time.
+    // ── Step 2: Guard ──────────────────────────────────────────────────────
     const canFire = await step.run('guard-check', async () =>
       canAgentFire(canvas_id, 'expander', node_id)
     )
@@ -117,36 +134,12 @@ export const agentPipeline = inngest.createFunction(
       return
     }
 
-    // ── Step 3: The judge — maturity + single-best routing in one call over ─
-    // the FULL canvas map (complete content). Phase advances first via the
-    // task-02 latch: a confident Attunement shift is what unlocks converging —
-    // and with it the Stress-Tester. Tier stays server-side (getAvailableAgents
-    // feeds the judge's tier_locked flag, never a client claim).
-    const decision = await step.run('judge', async () => {
-      const canvas = await getCanvas(canvas_id)
-      const session = await getSession(session_id)
-      const tier = await getTierByUser(canvas.user_id)
-      const available = getAvailableAgents(tier)
-      const phase = await maybeAdvancePhase(session, {
-        phase_shift_suggested: attunement.phase_shift_suggested,
-        confidence: attunement.confidence,
-      })
-      const judgeContext = await serializeJudgeContext(canvas, node_id)
-      return runJudge({
-        canvas_id,
-        session_id,
-        trigger_node_id: node_id,
-        phase,
-        attunement: {
-          cognitive_mode: attunement.cognitive_mode,
-          question_style: attunement.question_style,
-          phase_shift_suggested: attunement.phase_shift_suggested,
-          confidence: attunement.confidence,
-        },
-        serialized_context: judgeContext,
-        available_agents: available,
-      })
-    })
+    // ── Step 3: Judge ──────────────────────────────────────────────────────
+    // Phase advances here via the task-02 latch; a confident Attunement shift
+    // is what unlocks the Stress-Tester. Tier is server-side only.
+    const { decision, canvas: canvasAtJudge } = await step.run('judge', async () =>
+      runJudgeStep({ canvas_id, session_id, node_id, attunement })
+    )
     logger.info('[pipeline:agent] step:judge ruled', {
       canvas_id,
       session_id,
@@ -157,16 +150,11 @@ export const agentPipeline = inngest.createFunction(
       confidence: decision.confidence,
     })
 
-    // Not mature → silent "no pipeline". Nothing is shown, nothing is spent.
-    if (!decision.mature || decision.route === null) {
-      return
-    }
+    if (!decision.mature || decision.route === null) return
 
-    // Tier-locked best: never substitute a weaker agent (§4b). The upgrade
-    // offer surfaces on the sidebar card at show time (task-07) — until that
-    // surface exists, hold silently.
+    // Tier-locked best: upgrade offer surfaces at show (task-07). No substitution.
     if (decision.tier_locked) {
-      logger.info('[pipeline:agent] tier-locked route — upgrade offer, no generation', {
+      logger.info('[pipeline:agent] tier-locked — upgrade offer, no generation', {
         canvas_id,
         node_id,
         route: decision.route,
@@ -174,28 +162,112 @@ export const agentPipeline = inngest.createFunction(
       return
     }
 
-    // The Articulator/Outer-Sub proactive paths land with the handshake
-    // (task-04); their explicit-edge pipelines still run independently. Until
-    // then this pipeline only streams the two ghost-pair agents.
+    // Articulator/Outer-Sub proactive paths are for task-04+ (explicit-edge
+    // pipelines already handle them). Only Expander/Stress-Tester stream here.
     if (!isStreamable(decision.route)) {
-      logger.info('[pipeline:agent] non-streamable route — no ghost', {
-        canvas_id,
-        node_id,
-        route: decision.route,
-      })
+      logger.info('[pipeline:agent] non-streamable route', { canvas_id, node_id, route: decision.route })
       return
     }
-    const agentRole = decision.route
+    const initialRoute = decision.route
 
-    // ── Step 4: Build a SpawnDescriptor (pre-assigned ghost ids for the ────
-    // context node + question node) and publish a SPAWN message so the
-    // frontend can draw placeholder ghost frames before any content exists.
+    // ── Step 4: Create offer + publish 'waiting' ───────────────────────────
+    // offer_id was pre-generated by the route so waitForEvent can match on it.
+    // seq stub — atomic RPC replaces this in task-05.
+    const offer = await step.run('create-offer', async () => {
+      const session = await getSession(session_id)
+      const seq = await allocateSeq(session_id)
+      return createOffer({
+        id: offer_id,
+        canvas_id,
+        session_id,
+        agent_role: initialRoute,
+        trigger_node_id: node_id,
+        anchor_node_ids: decision.locus_node_ids,
+        seq,
+        context_fingerprint: canvasAtJudge.canvas_version.toString(),
+      })
+    })
+
+    await step.run('publish-waiting', async () => {
+      await publishWaiting(session_id, offer)
+    })
+    logger.info('[pipeline:agent] step:waiting published', { session_id, offer_id: offer.id, seq: offer.seq })
+
+    // ── Step 5: Wait for go ────────────────────────────────────────────────
+    // match: 'data.offer_id' compares the trigger event's offer_id to the
+    // incoming canvas/intervention.process event's offer_id — guaranteed unique.
+    const go = await step.waitForEvent('go', {
+      event: 'canvas/intervention.process',
+      timeout: '10m',
+      match: 'data.offer_id',
+    })
+
+    if (!go) {
+      // Hard timeout — tab was abandoned. Expire + withdraw silently.
+      await step.run('expire', async () => {
+        await updateOfferStatus(offer.id, 'expired')
+        await publishWithdraw(session_id, offer.id)
+      })
+      logger.info('[pipeline:agent] offer expired (timeout)', { offer_id: offer.id, session_id })
+      return
+    }
+
+    // ── Step 6: Re-judge if canvas fingerprint changed during the wait ─────
+    // canvas_version is bumped by a DB trigger on every node/edge mutation (§6).
+    // Unchanged → reuse cached route; changed → fresh Attunement + judge.
+    const finalRoute = await step.run('rejudge-if-changed', async (): Promise<StreamableRole | null> => {
+      const currentCanvas = await getCanvas(canvas_id)
+      if (currentCanvas.canvas_version.toString() === offer.context_fingerprint) {
+        // Fingerprint unchanged — cached route is still honest.
+        return initialRoute
+      }
+
+      logger.info('[pipeline:agent] fingerprint changed — re-judging', {
+        canvas_id,
+        offer_id: offer.id,
+        old: offer.context_fingerprint,
+        new: currentCanvas.canvas_version.toString(),
+      })
+
+      const recentNodes = await getRecentNodes(canvas_id, 5)
+      const freshAttunement = await runAttunement({
+        canvas_id,
+        session_id,
+        recent_nodes: formatRecentNodesForAttunement(recentNodes),
+      })
+      const { decision: freshDecision } = await runJudgeStep({
+        canvas_id,
+        session_id,
+        node_id,
+        attunement: freshAttunement,
+      })
+
+      if (
+        !freshDecision.mature ||
+        freshDecision.route === null ||
+        freshDecision.tier_locked ||
+        !isStreamable(freshDecision.route)
+      ) {
+        await updateOfferStatus(offer.id, 'expired')
+        await publishWithdraw(session_id, offer.id)
+        return null
+      }
+
+      return freshDecision.route
+    })
+
+    if (finalRoute === null) {
+      logger.info('[pipeline:agent] re-judge: no longer mature — withdrawn', { offer_id: offer.id })
+      return
+    }
+
+    // ── Step 7: Generate ───────────────────────────────────────────────────
     const descriptor = await step.run('publish-spawn', async () => {
       const d = buildSpawnDescriptor({
         trigger_node_id: node_id,
         session_id,
-        agent_role: agentRole,
-        context_node_type: DEFAULT_CONTEXT_TYPE[agentRole],
+        agent_role: finalRoute,
+        context_node_type: DEFAULT_CONTEXT_TYPE[finalRoute],
         has_question_node: true,
       })
       await publishSpawn(session_id, d)
@@ -204,57 +276,50 @@ export const agentPipeline = inngest.createFunction(
     logger.info('[pipeline:agent] step:spawn published', {
       canvas_id,
       session_id,
-      agent_role: agentRole,
+      agent_role: finalRoute,
       context_ghost_id: descriptor.context_node.ghost_id,
       question_ghost_id: descriptor.question_node?.ghost_id ?? null,
     })
 
-    // ── Step 5: Sleep so the frontend can animate the placeholder ghost ────
-    // frames before real tokens start arriving.
-    // step.sleep is the real Inngest API (the docs' `inngest.sleep` does not exist).
     await step.sleep('ghost-animation', '1500ms')
 
-    // ── Step 6: Serialize the agent's thread into LLM context — rejection ──
-    // insights are folded in as NEGATIVE CONSTRAINTS inside serialize() itself.
     const context = await step.run('serialize', async () => {
-      const thread = await getOrCreateThread(canvas_id, agentRole)
+      const thread = await getOrCreateThread(canvas_id, finalRoute)
       const canvas = await getCanvas(canvas_id)
-      return serialize(thread, agentRole, canvas)
+      return serialize(thread, finalRoute, canvas)
     })
     logger.info('[pipeline:agent] step:serialize complete', {
       canvas_id,
       session_id,
-      agent_role: agentRole,
+      agent_role: finalRoute,
       context_chars: context.length,
     })
 
-    // ── Step 7: Run the chosen agent and stream its output to Redis as one ──
-    // CHUNK message per token, targeting the pre-assigned context ghost id —
-    // this is what makes the ghost "type out" live on the canvas.
     const responseText = await step.run('stream-context', async () => {
       const stream =
-        agentRole === 'expander'
+        finalRoute === 'expander'
           ? await streamExpander({ canvas_id, trigger_node_id: node_id, serialized_context: context })
           : await streamStressTester({ canvas_id, trigger_node_id: node_id, serialized_context: context })
-
       return streamAgentOutput(stream.textStream, descriptor.context_node.ghost_id, session_id)
     })
     logger.info('[pipeline:agent] step:stream complete', {
       canvas_id,
       session_id,
-      agent_role: agentRole,
+      agent_role: finalRoute,
       response_chars: responseText.length,
     })
 
-    // ── Step 8: Publish DONE (tells the SSE route + frontend the ghost is ───
-    // fully rendered), persist the response as a ghost_pair turn on the
-    // thread (status starts 'pending' until the user accepts/rejects it),
-    // and tick down every active temporal-deferral rejection insight by one
-    // turn — those auto-expire after a few turns rather than blocking forever.
+    // ── Step 8: Show + finalize ────────────────────────────────────────────
+    // directness is stubbed as 'direct' — task-07 implements the show ruleset
+    // (directness × in-view → glow intensity / sidebar card).
     await step.run('finalize', async () => {
       await publishDone(session_id)
 
-      const thread = await getOrCreateThread(canvas_id, agentRole)
+      await updateOfferStatus(offer.id, 'shown', { directness: 'direct' })
+      const shownOffer = { ...offer, status: 'shown' as const, directness: 'direct' as const }
+      await publishOffer(session_id, shownOffer)
+
+      const thread = await getOrCreateThread(canvas_id, finalRoute)
       const ghost_pair: GhostPair = {
         triggered_by_node_id: node_id,
         context_ghost_id: descriptor.context_node.ghost_id,
@@ -269,8 +334,6 @@ export const agentPipeline = inngest.createFunction(
         timestamp: new Date().toISOString(),
       })
 
-      // Decrement every active temporal deferral by one turn — the RPC flips
-      // active=false when turns_remaining hits 0.
       const active = await getActiveByCanvas(canvas_id)
       let decremented = 0
       for (const insight of active) {
@@ -288,7 +351,8 @@ export const agentPipeline = inngest.createFunction(
       canvas_id,
       session_id,
       node_id,
-      route: agentRole,
+      offer_id: offer.id,
+      route: finalRoute,
       duration_ms: Date.now() - startedAt,
     })
   }
