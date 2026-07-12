@@ -109,3 +109,8 @@ export async function updateEmbedding(
 
   if (error) throw new Error(`updateEmbedding failed: ${error.message}`)
 }
+
+export async function deleteNode(node_id: string): Promise<void> {
+  const { error } = await db.from('nodes').delete().eq('id', node_id)
+  if (error) throw new Error(`deleteNode failed: ${error.message}`)
+}

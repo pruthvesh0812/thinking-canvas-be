@@ -44,11 +44,13 @@ canvasEventRoute.post('/canvas-event', async (c) => {
   logger.info('[route:canvas-event] received', { canvas_id, session_id, event_type })
 
   try {
-    if (event_type === 'node.created') {
+    if (event_type === 'node.created' || event_type === 'node.updated') {
       const node_id = parsed.data.node_id!
       const node = await getNode(node_id)
 
       // Directional summary — gemini-2.5-flash, thinking:low, structured output.
+      // Runs on BOTH node.created and node.updated: an edit makes the create-time
+      // summary + embedding stale (DESIGN §4g — node.updated must re-enrich).
       const { object } = await generateObject({
         model: models.fast(),
         schema: directionalSummarySchema,
@@ -62,14 +64,44 @@ canvasEventRoute.post('/canvas-event', async (c) => {
       const embedding = await generateEmbedding(node.content ?? object.summary)
       await updateEmbedding(node_id, embedding)
 
-      await appendToNodeSequence(session_id, node_id)
+      if (event_type === 'node.created') {
+        await appendToNodeSequence(session_id, node_id)
+        await inngest.send({
+          name: 'canvas/node.created',
+          data: { canvas_id, session_id, node_id },
+        })
+        logger.info('[route:canvas-event] node.created processed', { canvas_id, session_id, node_id })
+      } else {
+        logger.info('[route:canvas-event] node.updated enriched', { canvas_id, session_id, node_id })
+      }
 
+      return c.json({ ok: true })
+    }
+
+    if (event_type === 'node.deleted') {
+      const node_id = parsed.data.node_id!
+      // The FE already deleted the row from Supabase before notifying us.
+      // The fingerprint trigger bumped canvas_version on that DELETE. Fire the
+      // impact event so task-07 can classify whether an in-flight offer was
+      // anchored to the now-vanished node and warn/re-trigger accordingly.
       await inngest.send({
-        name: 'canvas/node.created',
-        data: { canvas_id, session_id, node_id },
+        name: 'canvas/intervention.impact',
+        data: { canvas_id, session_id, deleted_node_id: node_id },
       })
+      logger.info('[route:canvas-event] node.deleted — impact event fired', { canvas_id, session_id, node_id })
+      return c.json({ ok: true })
+    }
 
-      logger.info('[route:canvas-event] node.created processed', { canvas_id, session_id, node_id })
+    if (event_type === 'edge.deleted') {
+      const edge_id = parsed.data.edge_id!
+      // Edge deletes include re-parents (edge.deleted + edge.created in the FE).
+      // The fingerprint trigger has already bumped canvas_version. Fire impact
+      // so task-07 can check whether any in-flight offer was anchored via this edge.
+      await inngest.send({
+        name: 'canvas/intervention.impact',
+        data: { canvas_id, session_id, deleted_edge_id: edge_id },
+      })
+      logger.info('[route:canvas-event] edge.deleted — impact event fired', { canvas_id, session_id, edge_id })
       return c.json({ ok: true })
     }
 

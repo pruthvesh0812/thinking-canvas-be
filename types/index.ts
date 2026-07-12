@@ -351,21 +351,39 @@ export type Subscription = {
 // ─────────────────────────────────────────────
 
 // POST /api/canvas-event
-// The frontend writes the node/edge row to Supabase directly, then notifies the
-// backend with just its id. The route reads the authoritative row back — edge
-// flags (both_existing, edge_type) live in the DB and are never recomputed or
-// trusted from the request body (see DATABASE-SCHEMA non-negotiable).
+// ORDERING CONTRACT: the frontend writes the row to Supabase first, then POSTs
+// here with the id. The backend always reads post-mutation state — the
+// fingerprint DB trigger has already fired and bumped canvas_version.
+// This applies equally to creates, updates, deletes, and re-parents
+// (edge.deleted + edge.created).
+//
+// Cross-repo dependency: the frontend must persist ALL mutations to Supabase —
+// not just creates. A delete the FE never wrote is invisible to the fingerprint
+// and to the judge's canvas-map read (DESIGN §4g).
 export const canvasEventSchema = z
   .object({
     canvas_id: z.string().uuid(),
     session_id: z.string().uuid(),
     node_id: z.string().uuid().optional(),
     edge_id: z.string().uuid().optional(),
-    event_type: z.enum(['node.created', 'edge.created']),
+    event_type: z.enum([
+      'node.created',
+      'node.updated',
+      'node.deleted',
+      'edge.created',
+      'edge.deleted',
+    ]),
   })
-  .refine((d) => (d.event_type === 'node.created' ? !!d.node_id : !!d.edge_id), {
-    message: 'node.created requires node_id; edge.created requires edge_id',
-  })
+  .refine(
+    (d) => {
+      const isNodeEvent =
+        d.event_type === 'node.created' ||
+        d.event_type === 'node.updated' ||
+        d.event_type === 'node.deleted'
+      return isNodeEvent ? !!d.node_id : !!d.edge_id
+    },
+    { message: 'node events require node_id; edge events require edge_id' }
+  )
 
 export type CanvasEvent = z.infer<typeof canvasEventSchema>
 

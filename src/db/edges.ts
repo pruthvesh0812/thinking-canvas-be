@@ -23,6 +23,11 @@ export async function getEdgesByCanvas(canvas_id: string): Promise<Edge[]> {
   return (data ?? []) as Edge[]
 }
 
+export async function deleteEdge(edge_id: string): Promise<void> {
+  const { error } = await db.from('edges').delete().eq('id', edge_id)
+  if (error) throw new Error(`deleteEdge failed: ${error.message}`)
+}
+
 // both_existing flag is stored in DB — never recomputed in application code.
 export async function getBothExistingEdges(canvas_id: string): Promise<Edge[]> {
   const { data, error } = await db
