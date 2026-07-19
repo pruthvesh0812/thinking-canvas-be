@@ -18,7 +18,12 @@ streamRoute.get('/stream/:sessionId', (c) => {
     logger.info('[route:stream] subscribed', { session_id: sessionId })
 
     // streamSSE closes the connection as soon as this callback resolves, so we
-    // hold it open on a promise that only settles on `done` or client abort.
+    // hold it open on a promise that settles ONLY on client abort or a write
+    // error. `done` is purely informational and no longer tears down the
+    // connection — one session = one long-lived subscription for as many
+    // generations (and parked offers) as the session produces. Upstash pub/sub
+    // has no replay, so closing on `done` would drop anything published during
+    // the browser's reconnect window (FRONTEND-CONTRACT.md §6.1).
     await new Promise<void>((resolve) => {
       let settled = false
       const cleanup = () => {
@@ -36,12 +41,9 @@ streamRoute.get('/stream/:sessionId', (c) => {
       }, 25000)
 
       sub.on('message', ({ message }) => {
-        stream
-          .writeSSE({ data: JSON.stringify(message) })
-          .then(() => {
-            if (message.type === 'done') cleanup()
-          })
-          .catch(() => cleanup())
+        // Forward every message verbatim (including `done`); the write error is
+        // the real disconnect/backpressure signal, not any message type.
+        stream.writeSSE({ data: JSON.stringify(message) }).catch(() => cleanup())
       })
 
       sub.on('error', (err) => {

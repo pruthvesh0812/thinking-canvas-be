@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-07-17
-verified-against: intervention-spectrum task-01 (RedisMessage), task-04 (offer publishers), task-08 (timer_ms)
+last-verified: 2026-07-19
+verified-against: frontend-contract-holes (node_type + enriched done, hold-open stream.ts, done-last ordering)
 stale-after-days: 30
 referenced-from: intervention-layer/README.md, CANVAS-SYNC.md
 ---
@@ -21,17 +21,24 @@ full `RedisMessage` union is now:
 
 ```typescript
 type RedisMessage =
-  | { type: 'waiting';  offer: InterventionOffer; timer_ms: number }  // mature + parked — starts the FE timer
-  | { type: 'offer';    offer: InterventionOffer }                    // low-intensity show (glow / sidebar card)
-  | { type: 'withdraw'; offer_id: string }                           // supersede / no-longer-mature
-  | { type: 'spawn';    descriptor: SpawnDescriptor }                // ghost graph structure (existing)
-  | { type: 'chunk';    target: string; data: string }               // a token for one ghost_id (existing)
-  | { type: 'done' }                                                  // stream finished (existing)
+  | { type: 'waiting';   offer: InterventionOffer; timer_ms: number }  // mature + parked — starts the FE timer
+  | { type: 'offer';     offer: InterventionOffer }                    // low-intensity show (glow / sidebar card)
+  | { type: 'withdraw';  offer_id: string }                           // supersede / no-longer-mature
+  | { type: 'spawn';     descriptor: SpawnDescriptor }                // ghost graph structure (existing)
+  | { type: 'chunk';     target: string; data: string }               // a token for one ghost_id (existing)
+  | { type: 'node_type'; target: string; node_type: ContextNodeType } // server-split [NODE_TYPE:] — restyle context ghost
+  | { type: 'done'                                                     // stream finished — now carries attribution:
+      thread_id: string; turn_index: number                            //   POST /api/ghost-status without polling
+      trigger_node_id: string
+      context_ghost_id: string; question_ghost_id: string | null }     //   which pair finished
 ```
 
 Publishers live in `src/streaming/offer.ts`: `publishWaiting` (carries the
 receptivity-tuned `timer_ms`), `publishOffer`, `publishWithdraw` — mirrors of
-`spawn.ts`'s `publishSpawn`.
+`spawn.ts`'s `publishSpawn`. `src/streaming/tokens.ts` owns `publishDone`
+(attribution payload) and `streamAgentOutput` (server-side marker split →
+`node_type` + `[QUESTION]` routing). `node_type` and the enriched `done` were
+added by the **frontend-contract-holes** story.
 
 The three tiers of "loudness," from quietest to loudest:
 
@@ -47,8 +54,11 @@ The three tiers of "loudness," from quietest to loudest:
 ## Why it is done this way
 
 - **One channel, one union.** The SSE endpoint stays payload-agnostic — it forwards
-  whatever it receives and only special-cases `done`/`ping` for connection
-  lifecycle. Adding message types didn't require touching `stream.ts` at all.
+  whatever it receives and only special-cases `ping` (keepalive). It no longer
+  special-cases `done`: after the frontend-contract-holes fix the connection is
+  **hold-open** (settles only on client abort or a write error), so `done` is
+  forwarded like any other message. Adding message types didn't require any
+  per-type logic in `stream.ts`.
 - **The ghost stream is the *maximal* intervention, not a separate thing.** Framing
   `waiting`/`offer` as quieter rungs of the same protocol keeps the model coherent:
   the layer chooses how far up the loudness ladder to climb.
@@ -67,7 +77,9 @@ The three tiers of "loudness," from quietest to loudest:
 - **`offer`** → render the glow-or-card, choosing the surface from viewport position
   and `directness` (see [`03-show-ruleset.md`](./03-show-ruleset.md)).
 - **`withdraw`** → remove the waiting/shown offer with that `offer_id`.
-- **`spawn`/`chunk`/`done`** → the existing ghost-materialisation flow, unchanged.
+- **`spawn`/`chunk`/`node_type`/`done`** → the ghost-materialisation flow. Chunks
+  arrive pre-routed (context vs question); `node_type` restyles the context ghost;
+  `done` carries the turn attribution. The FE no longer parses markers.
 - The FE keys offers/ghosts by **`(anchor_node_id, seq)`** so a late stale message
   is ignored (see [`06-concurrency-and-versioning.md`](./06-concurrency-and-versioning.md)).
 
@@ -76,7 +88,12 @@ The three tiers of "loudness," from quietest to loudest:
 ## Key constraints
 
 - **`stream.ts` is payload-agnostic** — don't add per-offer logic there; it only
-  handles connection lifecycle (`done`/`ping`).
+  handles connection lifecycle (`ping` keepalive; hold-open until client abort).
+- **`done` is published LAST in `finalize`.** Every side effect the FE needs —
+  the `offer` show signal and the persisted ghost_pair turn (attributed by the
+  `done` payload) — must land before `done`. Persist the turn before publishing
+  `done`; a persist failure must abort before `done`. In `agent-pipeline.ts`
+  specifically, `publishOffer` also precedes `publishDone` (task-05).
 - **Never send canvas state over Redis** — only intervention signals + ghost
   streaming. This is non-negotiable #9 (amended); the ghost stream is its maximal
   form.

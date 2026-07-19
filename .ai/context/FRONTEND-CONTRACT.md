@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-07-05
-verified-against: src/routes/* · src/pipeline/* · src/streaming/* · src/agents/* prompts · types/index.ts · supabase/migrations/* (all read line-by-line on this date)
+last-verified: 2026-07-19
+verified-against: src/routes/* · src/pipeline/* · src/streaming/* · src/agents/* prompts · types/index.ts · supabase/migrations/* — §6/§6.1/§7.1/§7.2/§7.3/§11 updated for the frontend-contract-holes fix (server-side marker split, enriched done, hold-open SSE, ghost.accepted)
 stale-after-days: 30
 ---
 
@@ -89,7 +89,7 @@ correctly at insert time (the backend reads them verbatim, never recomputes):
 |---|---|---|
 | `canvases` | INSERT + SELECT | FE creates the canvas row directly (`title`, `original_intent`, `user_id`). `original_intent` is IMMUTABLE — an UPDATE changing it is rejected by RLS `WITH CHECK`. Never offer an "edit intent" UI. |
 | `sessions` | SELECT only | Read `current_phase`, `status`, `node_sequence`. **Never INSERT** — session creation must go through `POST /api/session/start` (§5.3) or agent threads miss their session-boundary markers. |
-| `agent_threads` | SELECT (workaround) | Needed today to resolve `thread_id`/`turn_index` for ghost-status (§7.2). One row per `(canvas_id, agent_role)`; `messages` is the JSONB turn array. Treat as read-only — writing it corrupts agent memory. |
+| `agent_threads` | SELECT (optional) | No longer needed for ghost-status — `thread_id`/`turn_index` come off the `done` message now (§7.2). Still readable for ground-truth reconciliation. One row per `(canvas_id, agent_role)`; `messages` is the JSONB turn array. Treat as read-only — writing it corrupts agent memory. |
 | `session_learnings` | SELECT | Observer output surfaced at next canvas open (`content`, `type: question|contradiction|empty_node`). Written by the session-complete pipeline, asynchronously after `POST /api/session/complete`. |
 | `subscriptions` | SELECT | Read `tier` + `status` for UI gating (upsell surfaces). Missing row or `status != 'active'` ⇒ treat as `free` (matches backend `getTierByUser`). Enforcement itself is server-side — the FE only mirrors it cosmetically. |
 
@@ -103,7 +103,7 @@ correctly at insert time (the backend reads them verbatim, never recomputes):
 | Drag edge out of a node into a NEW node | `nodes` insert + `edges` insert (`both_existing:false`) | **ONE event only:** `canvas-event` `edge.created` | Backend converts it to `node.created` for the edge's `to` node. Sending node.created AND edge.created for the same gesture double-fires the pipeline. |
 | Connect two EXISTING nodes (non-question) | `edges` insert (`both_existing:true`) | `canvas-event` `edge.created` | **Immediate** Articulator ghost (no debounce, no Orchestrator) |
 | Draw a `question` edge | `edges` insert (`edge_type:'question'`) | `canvas-event` `edge.created` | **Immediate** Outer Subconscious ghost pair |
-| Accept/reject a ghost | on accept: `nodes`/`edges` inserts (§7.3) | `ghost-status` | Thread turn status updated; rejection → Rejection Insights engine |
+| Accept/reject a ghost | on accept: `nodes`/`edges` inserts (§7.3) | `ghost-status` + (on accept) `canvas-event` `ghost.accepted` | Thread turn status updated; accept → enrich AI nodes (summary/embedding/sequence) + audit; rejection → Rejection Insights engine |
 | Start a session | — | `session/start` | Session row created; boundary turn appended to threads |
 | End a session ("Session Complete") | — | `session/complete` | Observer pass → `session_learnings` rows; session closed — both async |
 | Move/delete/edit a node or edge | Supabase write | **No event type exists yet** (§10, §11) | Backend is blind to these today |
@@ -122,11 +122,13 @@ arrive opportunistically on Plane 3 or not at all.
 ### 5.1 `POST /api/canvas-event`
 
 ```jsonc
-// node created:  { "canvas_id": uuid, "session_id": uuid, "event_type": "node.created", "node_id": uuid }
-// edge created:  { "canvas_id": uuid, "session_id": uuid, "event_type": "edge.created", "edge_id": uuid }
+// node created:   { "canvas_id": uuid, "session_id": uuid, "event_type": "node.created", "node_id": uuid }
+// edge created:   { "canvas_id": uuid, "session_id": uuid, "event_type": "edge.created", "edge_id": uuid }
+// ghost accepted: { "canvas_id": uuid, "session_id": uuid, "event_type": "ghost.accepted", "node_ids": [uuid], "agent_role": "expander" }  // §7.3
 ```
 - Zod: `canvasEventSchema` (`types/index.ts`) — the refinement rejects a
-  node.created without node_id (and vice versa) with a 400.
+  node.created without node_id (and vice versa), and a `ghost.accepted` without
+  `node_ids` + `agent_role`, with a 400.
 - `node.created` is **synchronous and slow** (~1-3s: Gemini summary + embedding
   happen before the response). Fire-and-forget from the FE; never block the
   canvas on it.
@@ -136,8 +138,8 @@ arrive opportunistically on Plane 3 or not at all.
 
 ```jsonc
 {
-  "thread_id": uuid,            // see §7.2 for how the FE obtains this today
-  "turn_index": 0,              // index into agent_threads.messages (the WHOLE array, not just assistant turns)
+  "thread_id": uuid,            // take straight off the `done` message (§7.2)
+  "turn_index": 0,              // also on `done`; index into agent_threads.messages (the WHOLE array)
   "canvas_id": uuid,
   "session_id": uuid,
   "context_node_status": "accepted" | "rejected",
@@ -193,9 +195,17 @@ no `event:`/`id:`/`retry:` field. `event.data` is a JSON string:
 type StreamMessage =
   | { type: 'spawn'; descriptor: SpawnDescriptor }   // render placeholder ghost frames + edges NOW
   | { type: 'chunk'; target: string; data: string }  // append data to the ghost node with ghost_id === target
-  | { type: 'done' }                                  // generation finished — carries NOTHING else (see below)
+  | { type: 'node_type'; target: string; node_type: ContextNodeType } // restyle the context ghost (server split [NODE_TYPE:])
+  | { type: 'done'                                    // generation finished — now carries attribution:
+      thread_id: string; turn_index: number           //   → POST /api/ghost-status, no agent_threads read (§7.2)
+      trigger_node_id: string
+      context_ghost_id: string; question_ghost_id: string | null }  // which pair finished
   | { type: 'ping' }                                  // keepalive every 25s — ignore
 ```
+
+> Both `node_type` and the enriched `done` were added by the
+> frontend-contract-holes fix. Chunks now arrive **pre-routed** (context vs
+> question) — the FE no longer parses `[NODE_TYPE:]`/`[QUESTION]` (§7.1).
 
 `SpawnDescriptor` (verbatim from `types/index.ts` — structure only, never
 content): `trigger_node_id`, `session_id`, `context_node {ghost_id, node_type,
@@ -208,57 +218,51 @@ ghost_id}`. Ghost ids are backend-minted UUIDs — key all chunk routing on them
 done. The FE defines all ghost visuals (opacity, dashed border, layout);
 the backend defines only structure + text.
 
-### 6.1 Connection lifecycle — sharp edges (verified in `src/routes/stream.ts`)
+### 6.1 Connection lifecycle (verified in `src/routes/stream.ts`)
 
-1. **The server CLOSES the SSE connection after every `done`.** The route's
-   promise resolves on `done`, ending the response. EventSource auto-reconnects
-   (~3s default) — you must treat reconnects as routine, not errors.
-2. **Messages published while you are reconnecting are LOST.** Upstash pub/sub
-   has no replay. A spawn that fires in the reconnect window never reaches the
-   FE. Mitigation until the backend fix (§11): reconnect immediately on
-   `close`/`error`, and reconcile pending ghosts from `agent_threads` when the
-   Session Complete screen or a canvas reload needs ground truth.
-3. **Concurrent generations share one channel and `done` is anonymous.** A
+1. **The connection is hold-open for the whole session.** The route's promise
+   settles only on client abort (you closing the EventSource) or a server write
+   error — **not** on `done`. Open ONE EventSource at session start and keep it;
+   there is no reconnect-per-generation loop to design around.
+2. **Nothing is lost to a reconnect window**, because there is no routine
+   reconnect. Every `spawn`/`chunk`/`node_type`/`done` for the session arrives
+   on the one connection. (A genuine network drop still needs a reconnect — treat
+   that as an error path, and reconcile ground truth from Supabase on reload.)
+3. **Concurrent generations share one channel and `done` is now attributed.** A
    debounced Expander run and an immediate Articulator run can interleave;
-   `chunk.target` disambiguates chunks, but `done` does not say WHICH pair
-   finished — and the first `done` also closes the connection mid-stream for
-   the other run (§11 P0). Until fixed: treat `done` as "a generation
-   finished", finalize any ghost that has received chunks, and rely on
-   reconnect for the remainder.
+   `chunk.target` disambiguates chunks, and `done` now carries
+   `context_ghost_id`/`question_ghost_id` so you know WHICH pair finished. A
+   `done` from one generation no longer tears down the other — finalize the pair
+   named in the `done` payload.
 
 ---
 
 ## 7. The Ghost Lifecycle — Frontend Playbook
 
-### 7.1 Rendering the stream — you MUST parse inline markers
+### 7.1 Rendering the stream — the backend splits markers for you
 
-Agent output is streamed RAW. The markers are part of the token stream, may be
-**split across chunk boundaries** (buffer before matching — never regex a lone
-chunk), and are NOT to be rendered as ghost text:
+Control markers are stripped **server-side** (`src/streaming/tokens.ts`). You do
+NOT buffer/parse/re-route the raw stream. Two things arrive instead:
 
-```
-[NODE_TYPE: reframe|mirror|pattern|reference|contradiction|appreciation]
-<context node text>
-[QUESTION]                     ← only for pair-producing agents
-<question node text>
-```
+- **`chunk` messages are already routed.** Text before `[QUESTION]` targets the
+  context ghost id; text after it targets the question ghost id. Just append
+  `chunk.data` to the ghost whose id === `chunk.target`.
+- **`node_type` message restyles the context ghost.** The backend parses
+  `[NODE_TYPE: x]` and sends `{ type:'node_type', target: <context ghost id>,
+  node_type: x }`. This overrides the spawn descriptor's pre-assigned default
+  (expander→`reframe`, stress_tester→`contradiction`,
+  outer_subconscious→`pattern`, articulator→`reframe`) — restyle when it arrives.
 
-Frontend responsibilities:
-- **`[NODE_TYPE: x]` overrides the descriptor.** The spawn descriptor's
-  `node_type` is only a pre-assigned default (expander→`reframe`,
-  stress_tester→`contradiction`, outer_subconscious→`pattern`,
-  articulator→`reframe`); the agent's own marker is the real type — restyle the
-  ghost when it arrives.
-- **Everything streams to the CONTEXT ghost id.** There is no server-side
-  splitting: on `[QUESTION]`, the FE must route subsequent text into the
-  question ghost itself.
-- **Articulator format differs:** no question node ever; its body is
-  `[ARTICULATION 1] … [ARTICULATION 2] … [ARTICULATION 3 (optional)]` sections
-  inside the single context node — render as 2–3 selectable readings.
+Still on the FE:
+- **Articulator sub-structure stays in-band.** The Articulator never has a
+  question node; its body streams `[ARTICULATION 1] … [ARTICULATION 2] …
+  [ARTICULATION 3 (optional)]` as ordinary context-ghost chunks (these are
+  sub-structure of one node, not a ghost split). Sub-render as 2–3 selectable
+  readings — this is the one marker the FE still reads.
 - **Empty question ghost:** expander/stress-tester spawns always pre-create a
-  question ghost, but an `appreciation` response may legitimately omit
-  `[QUESTION]`. If the question ghost has received no text by `done`, remove it
-  and its edge silently.
+  question ghost, but an `appreciation` response omits `[QUESTION]`, so the
+  question ghost simply receives no chunks. If it has received none by `done`,
+  remove it and its edge silently.
 
 Per-agent cheat sheet:
 
@@ -270,33 +274,39 @@ Per-agent cheat sheet:
 | `articulator` | never | NODE_TYPE + ARTICULATION 1..3 |
 | `observer` | — never streams a ghost pair (session-complete only, §10.1) | — |
 
-### 7.2 Resolving `thread_id` + `turn_index` (the workaround — read this)
+### 7.2 Resolving `thread_id` + `turn_index` — take them off `done`
 
-`POST /api/ghost-status` needs `thread_id` + `turn_index`, but **no stream
-message carries them** (§11 P0). Until the backend enriches `done`, do this:
+`POST /api/ghost-status` needs `thread_id` + `turn_index`, and the `done`
+message now carries both (plus `context_ghost_id`/`question_ghost_id` to match
+`done` to the right pair). The backend persists the ghost_pair turn **before**
+publishing `done`, so there is no race and no retry: read the ids straight off
+`done` and enable Accept/Reject.
 
-1. From the spawn descriptor keep `(agent_role, context_node.ghost_id)`.
-2. After `done`, query
-   `agent_threads` where `canvas_id = X AND agent_role = Y` (unique row).
-3. `turn_index` = index in `messages[]` of the turn where
-   `turn_type === 'ghost_pair' && ghost_pair.context_ghost_id === <ghost_id>`.
-4. **Race:** the turn is appended AFTER `done` is published — retry the read
-   (e.g. 3× with ~500ms backoff) before enabling the Accept/Reject buttons.
+No `agent_threads` read is needed for ghost-status anymore. (You may still read
+`agent_threads` for other ground-truth reconciliation, but not for this.)
 
 ### 7.3 On ACCEPT — the frontend persists the ghost itself
 
 The backend does NOT write accepted ghosts to the canvas. The FE must:
-1. Insert `nodes` rows (`owner:'ai'`, `content` = parsed ghost text — markers
-   stripped) for the context node and, if accepted, the question node. Reuse
-   the ghost UUIDs as node ids so thread records and canvas rows correlate.
+1. Insert `nodes` rows (`owner:'ai'`, `content` = ghost text) for the context
+   node and, if accepted, the question node. Reuse the ghost UUIDs as node ids
+   so thread records and canvas rows correlate.
 2. Insert the `edges` rows mirroring `context_edge` / `question_edge`
    (`both_existing:false`).
 3. `POST /api/ghost-status` with the statuses.
-4. **Do NOT send `canvas-event` for these AI writes.** Today that would fire
-   the agent pipeline off an AI node (ghost-on-ghost feedback) — there is no
-   "enrich-only" event type yet. Known cost: accepted AI nodes have NULL
-   summary/embedding, so they are second-class citizens in agent context and
-   semantic search until the backend adds an accepted-ghost enrich path (§11).
+4. **`POST /api/canvas-event` with `event_type:'ghost.accepted'`** to enrich the
+   AI nodes:
+   ```jsonc
+   { "canvas_id": uuid, "session_id": uuid, "event_type": "ghost.accepted",
+     "node_ids": [uuid, ...],        // the accepted node id(s) — 1 (context) or 2 (context+question)
+     "agent_role": "expander" | "stress_tester" | "outer_subconscious" | "articulator" | "observer" }
+   ```
+   The backend runs summary + embedding + `node_sequence` append for each id and
+   writes an `ai_contributions` audit row — the same enrichment a user node gets.
+   It does **NOT** re-trigger any agent (an AI acceptance is not a new-node
+   event). Idempotent — safe to retry. Send `agent_role` from the spawn
+   descriptor. This replaces the old "do NOT notify" workaround: accepted AI
+   nodes are now first-class in agent context and semantic search.
 
 On REJECT: discard the ghost visuals, then `POST /api/ghost-status` with the
 reason from the RejectionReasonSelector. Nothing is written to `nodes`/`edges`.
@@ -370,14 +380,19 @@ against them today = building against nothing.
 Durable record of the 2026-07-05 frontend-contract audit. Fixing these
 deletes the FE workarounds noted above.
 
+> **Resolved by the frontend-contract-holes story (2026-07-19):** the three
+> original P0 rows — (1) `done` carried nothing, (2) SSE closed on every `done`,
+> (3) accepted ghosts had no enrich path — are now fixed in code. `done` carries
+> attribution (§6/§7.2), the SSE connection is hold-open (§6.1), and
+> `ghost.accepted` enriches accepted AI nodes (§7.3). They are removed from the
+> table below; the remaining gaps keep their original audit numbering intent but
+> are re-listed fresh.
+
 | # | Severity | Gap | Recommended fix |
 |---|---|---|---|
-| 1 | **P0** | `done` carries nothing → FE can't attribute it, can't get `thread_id`/`turn_index` for ghost-status (workaround §7.2 + race) | Publish `{type:'done', thread_id, turn_index, context_ghost_id, question_ghost_id}` — persist the turn BEFORE publishing done (swap `finalize` step order in all 3 pipelines) |
-| 2 | **P0** | SSE closes on every `done`; kills concurrent streams; pub/sub loss window on reconnect | `stream.ts`: stop resolving on `done` — hold the connection until client abort. (`done` becomes purely informational.) |
-| 3 | **P0** | Accepted ghosts can't be enriched without re-triggering the pipeline | Add `event_type:'ghost.accepted'` (or `node.accepted_ghost`) to canvas-event: run summary/embedding + node_sequence append, skip the Inngest agent event |
-| 4 | P1 | No auth on Plane 2/3 — any origin-bypassing client can post events / read a session's stream by uuid | Verify Supabase JWT (Authorization: Bearer) on all /api routes; token query-param for EventSource |
-| 5 | P1 | Free tier reaches Outer Subconscious via question edges (tier checked only in the debounced pipeline) | `getTierByUser` + `getAvailableAgents` gate inside `outer-sub-pipeline` (and articulator for symmetry) |
-| 6 | P1 | `carry_forward_ids` accepted, ignored | Wire into session-complete (persist chosen unresolved threads as `session_learnings`) or drop from the schema until built |
-| 7 | P2 | No Stripe checkout endpoint; webhook expects `metadata.user_id` set by whoever creates the subscription | Add `POST /api/stripe/checkout` creating the session with `metadata.user_id` |
-| 8 | P2 | `interacted_at` validated but unused | Use for `ignored`-status heuristics or drop |
-| 9 | P2 | Second active session per canvas isn't rejected by `session/start` | Return 409 when an active session exists for the canvas |
+| 1 | P1 | No auth on Plane 2/3 — any origin-bypassing client can post events / read a session's stream by uuid | Verify Supabase JWT (Authorization: Bearer) on all /api routes; token query-param for EventSource |
+| 2 | P1 | Free tier reaches Outer Subconscious via question edges (tier checked only in the debounced pipeline) | `getTierByUser` + `getAvailableAgents` gate inside `outer-sub-pipeline` (and articulator for symmetry) |
+| 3 | P1 | `carry_forward_ids` accepted, ignored | Wire into session-complete (persist chosen unresolved threads as `session_learnings`) or drop from the schema until built |
+| 4 | P2 | No Stripe checkout endpoint; webhook expects `metadata.user_id` set by whoever creates the subscription | Add `POST /api/stripe/checkout` creating the session with `metadata.user_id` |
+| 5 | P2 | `interacted_at` validated but unused | Use for `ignored`-status heuristics or drop |
+| 6 | P2 | Second active session per canvas isn't rejected by `session/start` | Return 409 when an active session exists for the canvas |

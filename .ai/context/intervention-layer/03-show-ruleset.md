@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-07-17
-verified-against: intervention-spectrum task-07 (show ruleset)
+last-verified: 2026-07-19
+verified-against: intervention-spectrum task-07 (show ruleset) · frontend-contract-holes task-05 (offer-before-done ordering)
 stale-after-days: 30
 referenced-from: intervention-layer/README.md
 ---
@@ -20,6 +20,15 @@ After generation, the backend stamps the offer with two things and publishes it:
 
 1. **`directness`** — `'direct'` or `'subtle'`.
 2. **`headline`** — a one-line, plain-language summary of what the agent produced.
+
+> **Ordering constraint (load-bearing).** The `offer` publish carrying
+> `directness`/`headline` MUST precede `publishDone` in the `finalize` step.
+> `done` is published **last** — after the offer publish and after the
+> ghost_pair `appendMessage`. This was a real bug until the
+> frontend-contract-holes fix: `publishDone` fired first, and because the SSE
+> route used to close on `done`, the offer publish landed on an already-torn-down
+> subscription and was dropped every time. See
+> [`07-streaming-protocol.md`](./07-streaming-protocol.md).
 
 The frontend then crosses `directness` with a fact only it knows — **is the anchor
 node in the viewport or off-screen** — to pick the actual surface:
@@ -107,3 +116,7 @@ unlock it,"* anchored to the right place on the canvas. See
   reveals on hover. Never render a fully-formed AI node unbidden.
 - **The headline is derived from the agent's real output**, not a generic string —
   it must reflect what actually landed.
+- **Publish the `offer` before `done`.** `done` is the last publish in
+  `finalize`; the offer's show signal must reach the client first (the SSE
+  connection is hold-open now, but the ordering keeps the offer ahead of any
+  FE-side finalize-on-`done`).

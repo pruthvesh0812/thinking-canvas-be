@@ -2,7 +2,7 @@
 feature: "frontend-contract-holes"
 type: story
 created: 2026-07-05
-status: draft
+status: done
 git_branch: "fix/frontend-contract-holes-2026-07-05T1200"
 ---
 

@@ -4,7 +4,7 @@ type: task
 task_id: task-04
 story: ../story.md
 created: 2026-07-05
-status: draft
+status: done
 ---
 
 ## Scope

@@ -6,7 +6,7 @@ import { streamAgentOutput, publishDone } from '../streaming/tokens.js'
 import { streamOuterSubconscious } from '../agents/outer-subconscious.js'
 import { serialize } from '../serializer/index.js'
 import { getCanvas } from '../db/canvases.js'
-import { getOrCreateThread, appendMessage } from '../db/threads.js'
+import { getOrCreateThread, appendMessage, getById } from '../db/threads.js'
 import type { GhostPair } from '../../types/index.js'
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -85,16 +85,22 @@ export const outerSubPipeline = inngest.createFunction(
 
     // ── Step 5: Run the agent and stream its output to Redis. It emits ONE ──
     // stream containing both the context paragraph and a trailing [QUESTION]
-    // section; streamAgentOutput here only tags tokens with the context ghost
-    // id, while the question ghost id travels in the descriptor for the token
-    // layer to split the [QUESTION] section onto.
+    // section; the token layer splits at [QUESTION], routing the context text
+    // to the context ghost and the question text to the question ghost id.
     const responseText = await step.run('stream-context-and-question', async () => {
       const stream = await streamOuterSubconscious({
         canvas_id,
         trigger_node_id: from_node_id,
         serialized_context: context,
       })
-      return streamAgentOutput(stream.textStream, descriptor.context_node.ghost_id, session_id)
+      return streamAgentOutput(
+        stream.textStream,
+        {
+          contextGhostId: descriptor.context_node.ghost_id,
+          questionGhostId: descriptor.question_node?.ghost_id ?? null,
+        },
+        session_id
+      )
     })
     logger.info('[pipeline:outer-sub] step:stream complete', {
       canvas_id,
@@ -102,11 +108,10 @@ export const outerSubPipeline = inngest.createFunction(
       response_chars: responseText.length,
     })
 
-    // ── Step 6: Publish DONE and persist the combined context+question ─────
-    // response as a single pending ghost pair turn on the thread.
+    // ── Step 6: Persist the combined context+question response as a single ──
+    // pending ghost pair turn FIRST, then publish an attribution-carrying DONE
+    // (task-01). Persist before publish: a failed append aborts before `done`.
     await step.run('finalize', async () => {
-      await publishDone(session_id)
-
       const thread = await getOrCreateThread(canvas_id, 'outer_subconscious')
       const ghost_pair: GhostPair = {
         triggered_by_node_id: from_node_id,
@@ -120,6 +125,21 @@ export const outerSubPipeline = inngest.createFunction(
         content: responseText,
         ghost_pair,
         timestamp: new Date().toISOString(),
+      })
+
+      const persisted = await getById(thread.id)
+      const turn_index = (persisted?.messages ?? []).findIndex(
+        (m) =>
+          m.turn_type === 'ghost_pair' &&
+          m.ghost_pair.context_ghost_id === descriptor.context_node.ghost_id
+      )
+
+      await publishDone(session_id, {
+        thread_id: thread.id,
+        turn_index,
+        trigger_node_id: from_node_id,
+        context_ghost_id: descriptor.context_node.ghost_id,
+        question_ghost_id: descriptor.question_node?.ghost_id ?? null,
       })
     })
 

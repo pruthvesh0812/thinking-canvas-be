@@ -15,7 +15,7 @@ import { getRecentNodes } from '../db/nodes.js'
 import { getCanvas } from '../db/canvases.js'
 import { getSession, maybeAdvancePhase, getReceptivity, applyReceptivityResponse } from '../db/sessions.js'
 import { getTierByUser } from '../db/subscriptions.js'
-import { getOrCreateThread, appendMessage } from '../db/threads.js'
+import { getOrCreateThread, appendMessage, getById } from '../db/threads.js'
 import { getActiveByCanvas, decrementTurnsRemaining } from '../db/rejection-insights.js'
 import {
   createOffer,
@@ -404,7 +404,14 @@ export const agentPipeline = inngest.createFunction(
         finalRoute === 'expander'
           ? await streamExpander({ canvas_id, trigger_node_id: node_id, serialized_context: context })
           : await streamStressTester({ canvas_id, trigger_node_id: node_id, serialized_context: context })
-      return streamAgentOutput(stream.textStream, descriptor.context_node.ghost_id, session_id)
+      return streamAgentOutput(
+        stream.textStream,
+        {
+          contextGhostId: descriptor.context_node.ghost_id,
+          questionGhostId: descriptor.question_node?.ghost_id ?? null,
+        },
+        session_id
+      )
     })
     logger.info('[pipeline:agent] step:stream complete', {
       canvas_id,
@@ -419,17 +426,24 @@ export const agentPipeline = inngest.createFunction(
     // the wait may have just folded a 'manual' response into it. Headline is
     // backend-authored from the agent's own [NODE_TYPE:...] tag — only the
     // backend knows what landed.
+    //
+    // ORDERING IS LOAD-BEARING (task-01 + task-05): every side effect the FE
+    // needs — the offer's show signal AND the persisted ghost_pair turn — must
+    // land BEFORE `publishDone`, which is published LAST. `done` carries the
+    // turn attribution (thread_id/turn_index/ghost ids) and, for any FE that
+    // finalizes on it, marks the end of the generation. Publishing the offer or
+    // persisting the turn after `done` would drop/race them.
     await step.run('finalize', async () => {
-      await publishDone(session_id)
-
       const { receptivity } = await getReceptivity(session_id)
       const directness = decideDirectness(attentionState, 'standard', receptivity)
       const headline = authorHeadline(responseText, DEFAULT_CONTEXT_TYPE[finalRoute])
 
       await updateOfferStatus(offer.id, 'shown', { directness, headline })
       const shownOffer = { ...offer, status: 'shown' as const, directness, headline }
-      await publishOffer(session_id, shownOffer)
 
+      // Persist the ghost_pair turn FIRST — a failure here must propagate and
+      // abort before any `done` is published (never leave the FE waiting on a
+      // `done` for a turn that never persisted).
       const thread = await getOrCreateThread(canvas_id, finalRoute)
       const ghost_pair: GhostPair = {
         triggered_by_node_id: node_id,
@@ -445,6 +459,16 @@ export const agentPipeline = inngest.createFunction(
         timestamp: new Date().toISOString(),
       })
 
+      // Derive turn_index by matching the globally-unique context_ghost_id.
+      // Append-only writes never shift an existing element's index, so a
+      // concurrent append to the same thread can't move ours (race-safe).
+      const persisted = await getById(thread.id)
+      const turn_index = (persisted?.messages ?? []).findIndex(
+        (m) =>
+          m.turn_type === 'ghost_pair' &&
+          m.ghost_pair.context_ghost_id === descriptor.context_node.ghost_id
+      )
+
       const active = await getActiveByCanvas(canvas_id)
       let decremented = 0
       for (const insight of active) {
@@ -456,6 +480,17 @@ export const agentPipeline = inngest.createFunction(
       if (decremented > 0) {
         logger.info('[pipeline:agent] step:finalize deferrals decremented', { canvas_id, decremented })
       }
+
+      // Publish the offer's show signal (directness/headline — the Show
+      // ruleset's output), THEN `done` LAST.
+      await publishOffer(session_id, shownOffer)
+      await publishDone(session_id, {
+        thread_id: thread.id,
+        turn_index,
+        trigger_node_id: node_id,
+        context_ghost_id: descriptor.context_node.ghost_id,
+        question_ghost_id: descriptor.question_node?.ghost_id ?? null,
+      })
     })
 
     logger.info('[pipeline:agent] done', {

@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-07-17
-verified-against: intervention-spectrum (RedisMessage generalised: waiting/offer/withdraw)
+last-verified: 2026-07-19
+verified-against: frontend-contract-holes (server-side marker split, enriched done, hold-open SSE, ghost.accepted)
 stale-after-days: 30
 ---
 
@@ -48,20 +48,22 @@ Inngest Worker
   ├── 3. Sleep 1500ms (Inngest sleep)
   │         Frontend animates empty ghost frames + edges onto canvas
   │
-  ├── 4. Stream context node content
-  │         for await (const token of agent.stream(context)) {
-  │           redis.publish(`canvas:stream:${sessionId}`,
-  │             JSON.stringify({ type: 'chunk', target: descriptor.context_node.ghost_id, data: token }))
-  │         }
+  ├── 4. Stream agent output — marker split SERVER-SIDE (src/streaming/tokens.ts)
+  │         streamAgentOutput(textStream, { contextGhostId, questionGhostId }, sessionId)
+  │         - [NODE_TYPE: x] → { type:'node_type', target: contextGhostId, node_type: x }
+  │           (stripped from the text; the FE restyles the context ghost)
+  │         - text before [QUESTION] → chunks targeting contextGhostId
+  │         - text after  [QUESTION] → chunks targeting questionGhostId (marker dropped)
+  │         - [ARTICULATION n] stays in-band (sub-structure of one context node)
   │
-  ├── 5. Stream question node content (if present)
-  │         for await (const token of questionStream) {
-  │           redis.publish(`canvas:stream:${sessionId}`,
-  │             JSON.stringify({ type: 'chunk', target: descriptor.question_node.ghost_id, data: token }))
-  │         }
+  ├── 5. Persist the ghost_pair turn (appendMessage) — BEFORE done, so
+  │         thread_id/turn_index in the done payload resolve a persisted turn
   │
-  └── 6. Publish DONE
-            redis.publish(`canvas:stream:${sessionId}`, JSON.stringify({ type: 'done' }))
+  └── 6. Publish DONE — LAST, carrying attribution
+            redis.publish(`canvas:stream:${sessionId}`, JSON.stringify({
+              type: 'done', thread_id, turn_index,
+              trigger_node_id, context_ghost_id, question_ghost_id,
+            }))
 ```
 
 ---
@@ -106,15 +108,26 @@ type RedisMessage =
   | { type: 'waiting';  offer: InterventionOffer; timer_ms: number }  // mature + parked — starts the FE timer
   | { type: 'offer';    offer: InterventionOffer }                    // low-intensity show (glow / sidebar card)
   | { type: 'withdraw'; offer_id: string }                           // supersede / no-longer-mature
-  | { type: 'spawn';  descriptor: SpawnDescriptor }
-  | { type: 'chunk';  target: string; data: string }  // target = ghost_id
-  | { type: 'done' }                                   // carries no ids — known P0 gap (FRONTEND-CONTRACT.md §11)
+  | { type: 'spawn';     descriptor: SpawnDescriptor }
+  | { type: 'chunk';     target: string; data: string }              // target = ghost_id
+  | { type: 'node_type'; target: string; node_type: ContextNodeType } // server-split [NODE_TYPE:] — target = context ghost id
+  | { type: 'done'
+      thread_id: string; turn_index: number                          // address the persisted turn for POST /api/ghost-status
+      trigger_node_id: string
+      context_ghost_id: string; question_ghost_id: string | null }   // disambiguate WHICH pair finished
 ```
 
-`spawn`/`chunk`/`done` are the **maximal** rung (a full ghost pair streaming in);
-`waiting`/`offer`/`withdraw` are the quieter rungs added by the intervention layer.
-`stream.ts` is unchanged — it forwards every type verbatim and only special-cases
-`done`/`ping`. Full detail: `.ai/context/intervention-layer/07-streaming-protocol.md`.
+`spawn`/`chunk`/`node_type`/`done` are the **maximal** rung (a full ghost pair
+streaming in); `waiting`/`offer`/`withdraw` are the quieter rungs added by the
+intervention layer. `stream.ts` forwards every type verbatim and only
+special-cases `ping` (keepalive) — it no longer special-cases `done` (the
+connection is hold-open now; see below). Full detail:
+`.ai/context/intervention-layer/07-streaming-protocol.md`.
+
+`node_type` and the enriched `done` were added by the **frontend-contract-holes**
+story (server-side marker split + `done` attribution). The FE no longer parses
+`[NODE_TYPE:]`/`[QUESTION]` out of the raw stream, and no longer polls
+`agent_threads` to attribute a `done`.
 
 ---
 
@@ -127,20 +140,22 @@ type RedisMessage =
 plain `data:` events — no `event:`/`id:` fields.
 
 **Actual lifecycle (as implemented):** the handler holds the response open on a
-promise and resolves it — closing the SSE connection — on the first `done`
-message, a write failure, or client abort. Consequences:
+promise that settles **only** on client abort (`stream.onAbort`) or a
+`writeSSE` rejection (real disconnect/backpressure). `done` is forwarded like
+any other message and does **not** close the connection. One session = one
+long-lived subscription for every generation (and every parked offer) the
+session produces. Consequences:
 
-- The browser's EventSource must auto-reconnect after every generation
-  (default behaviour, ~3s).
-- Upstash pub/sub has **no replay** — anything published during the reconnect
-  window is lost.
-- With two concurrent generations on one session (e.g. debounced Expander +
-  immediate Articulator), the first `done` closes the connection mid-stream
-  for the other.
+- No reconnect between generations — nothing is lost to a reconnect window.
+- Two concurrent generations on one session both complete on the same
+  connection; the enriched `done` (`context_ghost_id`/`question_ghost_id`)
+  disambiguates which pair finished.
+- A parked intervention offer (up to a 10-minute wait) survives an unrelated
+  pipeline's `done` on the same channel.
 
-This close-on-done behaviour is flagged as P0 in FRONTEND-CONTRACT.md §11
-(recommended fix: hold the connection until abort; `done` becomes
-informational). If you change it, update both docs.
+The `cleanup()` guard (`clearInterval(ping)` + `sub.unsubscribe()`) still runs
+exactly once via the `settled` flag. This hold-open behaviour was landed by the
+**frontend-contract-holes** story (task-03). If you change it, update both docs.
 
 ---
 
@@ -167,10 +182,10 @@ informational). If you change it, update both docs.
 // 2. If context_node_status === 'rejected' → fire canvas/ghost.rejected
 // 3. NO Realtime broadcast — single-user, no other clients to notify
 //
-// NOTE: no stream message carries thread_id/turn_index today — the frontend
-// resolves them by reading agent_threads (canvas_id, agent_role) and matching
-// ghost_pair.context_ghost_id, AFTER done (with retry — the turn is persisted
-// after done publishes). See FRONTEND-CONTRACT.md §7.2 / §11 P0.
+// NOTE: the `done` message now carries thread_id + turn_index (plus the ghost
+// ids) directly — the turn is persisted BEFORE done publishes — so the frontend
+// takes them straight off `done`, no agent_threads read or retry. See
+// FRONTEND-CONTRACT.md §7.2.
 ```
 
 ---
@@ -182,20 +197,26 @@ informational). If you change it, update both docs.
 The frontend (separate repo: thinking-canvas-web) is responsible for:
 - Rendering ghost node HTML from the spawn descriptor (backend defines content only)
 - Creating ghost node + edge React Flow elements on `spawn` message
-- Filling ghost node text content on `chunk` messages (by ghost_id target)
-- **Parsing the inline markers out of the raw token stream** — `[NODE_TYPE: x]`
-  (overrides the descriptor's default type), `[QUESTION]` (split point: route
-  the rest into the question ghost — the backend does not split), and the
-  Articulator's `[ARTICULATION n]` sections
-- Removing an empty question ghost + edge at `done` (appreciation responses may omit `[QUESTION]`)
-- Accept/Reject UI and calling POST /api/ghost-status (resolving
-  thread_id/turn_index via an agent_threads read — see FRONTEND-CONTRACT.md §7.2)
+- Filling ghost node text content on `chunk` messages (by ghost_id target) —
+  chunks arrive **already routed**: context chunks target the context ghost,
+  post-`[QUESTION]` chunks target the question ghost. Just append `chunk.data`
+  to `chunk.target`; no marker parsing.
+- Restyling the context ghost on a `node_type` message (backend split the
+  `[NODE_TYPE: x]` marker server-side; `target` is the context ghost id)
+- The Articulator's `[ARTICULATION n]` sections still arrive **in-band** in the
+  context chunks (sub-structure of one node) — sub-render as 2–3 readings
+- Removing an empty question ghost + edge at `done` (appreciation responses may
+  omit `[QUESTION]`, so the question ghost simply receives no chunks)
+- Accept/Reject UI and calling POST /api/ghost-status, taking `thread_id` +
+  `turn_index` straight off the `done` message (no agent_threads read)
 - **Persisting accepted ghosts itself** — inserting the `nodes` (owner:'ai') and
-  `edges` rows; the backend only records the status on the thread
+  `edges` rows — then POSTing `canvas-event` `ghost.accepted` so the backend
+  enriches them (summary/embedding/sequence). See FRONTEND-CONTRACT.md §7.3.
 - RejectionReasonSelector component
 - Writing user-created nodes/edges directly to Supabase, then notifying via
   POST /api/canvas-event (write-first, notify-second)
-- Reconnecting the EventSource after every `done` (the server closes the stream)
+- Holding ONE EventSource open per session — the server no longer closes on
+  `done`, so there is no reconnect-per-generation loop
 
 The backend does NOT define how ghost nodes look. It defines:
 - What type of node (reframe, mirror, question etc.)
@@ -250,16 +271,24 @@ const descriptor = await step.run('publish-spawn', async () => {
 // Step 5: Sleep for ghost animation (step.sleep — inngest.sleep does not exist)
 await step.sleep('ghost-animation', '1500ms')
 
-// Step 7: Stream — streamAgentOutput (src/streaming/tokens.ts) publishes every
-// token as a chunk targeting the CONTEXT ghost id and returns the full text.
+// Step 7: Stream — streamAgentOutput (src/streaming/tokens.ts) splits control
+// markers server-side (node_type message + [QUESTION] routing) and returns the
+// full RAW text (markers included) for the thread turn.
 const responseText = await step.run('stream-context', async () => {
   const stream = await streamExpander({ … })
-  return streamAgentOutput(stream.textStream, descriptor.context_node.ghost_id, session_id)
+  return streamAgentOutput(
+    stream.textStream,
+    { contextGhostId: descriptor.context_node.ghost_id,
+      questionGhostId: descriptor.question_node?.ghost_id ?? null },
+    session_id,
+  )
 })
 
-// Step 8 ('finalize'): publishDone(session_id) THEN appendMessage(ghost_pair,
-// pair_status:'pending') — done is published BEFORE the turn is persisted,
-// which is why frontend thread reads after done must retry (FRONTEND-CONTRACT.md §7.2).
+// Step 8 ('finalize'): appendMessage(ghost_pair, pair_status:'pending') FIRST,
+// derive turn_index by matching context_ghost_id, THEN publishDone LAST with the
+// attribution payload. The offer publish (agent-pipeline only) also lands before
+// done. Persist-before-done means a FE reading the turn off `done` never races an
+// unpersisted turn (FRONTEND-CONTRACT.md §7.2). A failed append aborts BEFORE done.
 ```
 
 ---
