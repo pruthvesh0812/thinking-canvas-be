@@ -8,15 +8,30 @@ status: draft
 ---
 
 ## Scope
-Hole #4 — give accepted ghosts an enrich path. When the user accepts a ghost the
-frontend writes the `nodes`/`edges` rows itself (`owner:'ai'`), but there is no
-way to tell the backend "enrich this AI node" without firing `canvas-event
-node.created`, which re-runs the agent pipeline on an AI node (ghost-on-ghost).
-So today accepted AI nodes are left with NULL `summary`/`embedding` and are
+Hole #4 — give accepted ghosts an *intentional* enrich path. When the user
+accepts a ghost the frontend writes the `nodes`/`edges` rows itself
+(`owner:'ai'`), but there is no explicit way to tell the backend "enrich this AI
+node." Today accepted AI nodes are left with NULL `summary`/`embedding` and are
 second-class in serialization + semantic search (FRONTEND-CONTRACT.md §7.3). Add
 a `ghost.accepted` event to `POST /api/canvas-event` that runs the same enrich
-(directional summary + embedding + `node_sequence` append) **without** enqueuing
-`canvas/node.created`, and write the first-ever `ai_contributions` audit row.
+(directional summary + embedding + `node_sequence` append), and write the
+first-ever `ai_contributions` audit row.
+
+> **Reframed 2026-07-19.** This task was originally written against a
+> debounced pipeline that auto-fired on every `canvas/node.created` — so firing
+> that event for an accepted ghost risked re-running an agent on its own output
+> (ghost-on-ghost). Since the intervention-spectrum merge, `canvas/node.created`
+> is a **dead Inngest event**: `src/index.ts` only wires `agentPipeline` to
+> `canvas/intervention.trigger`, and nothing subscribes to `node.created`
+> anymore. So the specific re-trigger risk no longer exists — but that is an
+> **accident of the current wiring, not a documented contract.** The task's
+> goal is unchanged: an explicit `ghost.accepted` event is still needed so the
+> enrich path doesn't silently depend on an event nobody happens to be
+> listening to today. If a future feature ever resubscribes to
+> `canvas/node.created` (plausible — this codebase has already replaced its
+> trigger model once), relying on the current accident would silently
+> reintroduce ghost-on-ghost re-triggering with no test to catch it. Build
+> `ghost.accepted` as the correct, intentional path regardless.
 
 ## Files to Touch
 ```
@@ -44,7 +59,8 @@ For each `node_id` in `node_ids` — reuse the existing `node.created` enrich bl
 (directional summary via `models.fast()` + embedding via `generateEmbedding` +
 `appendToNodeSequence`), then insert an `ai_contributions` row
 (`agent_role`, `ghost_id = node_id`, `status: 'accepted'`). **Do NOT**
-`inngest.send('canvas/node.created')` — that is the whole point.
+`inngest.send('canvas/node.created')` — semantically an AI acceptance is not a
+new-node event, regardless of whether anything currently subscribes to it.
 - **Idempotent:** the FE may retry. Enrich is an overwrite (safe); guard the
   `node_sequence` append + audit insert so a retry doesn't duplicate.
 - `agent_role` for the audit: accept it in the payload (the FE knows it from the

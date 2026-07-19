@@ -15,6 +15,18 @@ without polling `agent_threads` and matching a ghost id, with a retry race
 (FRONTEND-CONTRACT.md §7.2). Fix both halves: **persist the turn first**, then
 publish a `done` that carries `thread_id`, `turn_index`, and the ghost ids.
 
+> **Re-verified 2026-07-19** against the merged intervention-spectrum feature.
+> All three call sites (`agent-pipeline.ts`'s `Step 8: Show + finalize`,
+> `articulator-pipeline.ts`, `outer-sub-pipeline.ts`) are unchanged in this
+> respect: `publishDone(session_id)` still fires with no ids, still before
+> `appendMessage`. In `agent-pipeline.ts` specifically, `finalize` now ALSO
+> contains an offer-publish sequence (`updateOfferStatus` + `publishOffer`)
+> between those two calls — see **task-05**, which fixes a distinct, more
+> severe bug in the same block (the offer itself never reaching the client).
+> **Implement task-01 and task-05 together for `agent-pipeline.ts`** — a
+> partial reorder that moves `appendMessage` before `publishDone` but leaves
+> `publishOffer` after it "fixes" this task while leaving task-05's bug in place.
+
 ## Files to Touch
 ```
 MODIFY:
@@ -58,7 +70,9 @@ export type RedisMessage =
   `question_ghost_id: null`.
 
 ## Depends On
-None. (task-02 depends on this — shared `RedisMessage`/`tokens.ts` surface.)
+None. (task-02 depends on this — shared `RedisMessage`/`tokens.ts` surface.
+task-05 doesn't strictly depend on this, but touches the same `finalize` block
+in `agent-pipeline.ts` — land them in the same change for that file.)
 
 ## Definition of Done
 - [ ] `RedisMessage['done']` carries `thread_id`, `turn_index`, `trigger_node_id`, `context_ghost_id`, `question_ghost_id`

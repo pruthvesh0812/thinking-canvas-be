@@ -18,6 +18,17 @@ connection mid-stream for the other (FRONTEND-CONTRACT.md §6.1). Make the
 connection live for the whole session: hold it open until **client abort** (or a
 write error); `done` becomes purely informational and is still forwarded.
 
+> **Re-verified 2026-07-19:** `stream.ts` is byte-for-byte unchanged since this
+> task was written — still open. The payoff is now bigger: the merged
+> intervention-spectrum feature can park an offer in `waiting` for up to **10
+> minutes** (`step.waitForEvent(..., timeout: '10m')` in `agent-pipeline.ts`),
+> versus the old ~seconds-long debounce window. Any *other* pipeline's `done`
+> on the same session channel (Articulator, Outer-Sub) can now tear down the
+> shared connection at any point during that much longer wait, silently
+> dropping the parked offer's eventual `waiting`→`offer`/`withdraw` transition
+> until the client reconnects. This is a separate, cross-pipeline version of
+> the same-pipeline bug **task-05** fixes — task-03 is what closes it fully.
+
 ## Files to Touch
 ```
 MODIFY:
@@ -40,9 +51,12 @@ MODIFY:
   subscription for as many generations as the session produces.
 
 ## Depends On
-None. Independent of task-01/02/04. (Synergistic with task-01: a single held-open
-connection is what lets the enriched, per-ghost `done` disambiguate concurrent
-generations — but neither blocks the other.)
+None. Independent of task-01/02/04/05. (Synergistic with task-01: a single
+held-open connection is what lets the enriched, per-ghost `done` disambiguate
+concurrent generations. Synergistic with task-05: task-05 fixes the
+same-pipeline offer-after-done race regardless of whether this task lands;
+task-03 is what additionally protects a parked offer from an *unrelated*
+pipeline's `done` — neither blocks the other.)
 
 ## Definition of Done
 - [ ] `stream.ts` no longer resolves/cleans up on `done`; only on abort or write error
