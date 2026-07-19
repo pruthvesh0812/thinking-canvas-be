@@ -1,5 +1,11 @@
 import { db } from './client.js'
-import type { Session, SessionPhase } from '../../types/index.js'
+import { nextReceptivity, type ReceptivityResponse } from '../lib/intervention.js'
+import type { AttunementState, Session, SessionPhase } from '../../types/index.js'
+
+// Hysteresis threshold for the diverging→converging latch: a confident/sustained
+// shift is required so phase doesn't chatter on a single low-confidence read.
+// Tunable — see DESIGN.md §10 (open item).
+export const PHASE_SHIFT_MIN_CONFIDENCE = 0.7
 
 export async function getSession(id: string): Promise<Session> {
   const { data, error } = await db
@@ -68,4 +74,69 @@ export async function updatePhase(
     .eq('id', session_id)
 
   if (error) throw new Error(`updatePhase failed: ${error.message}`)
+}
+
+// v1 phase model = a ONE-WAY latch: diverging → converging, once. Re-divergence
+// (converging → diverging) is deferred to the branching era — see DESIGN.md §4c.
+// Flips only on a confident/sustained shift from Attunement (hysteresis), which is
+// what finally makes the converging phase — and thus the Stress-Tester — reachable.
+// Returns the phase now in effect; persists only when it actually flips.
+export async function maybeAdvancePhase(
+  session: Session,
+  attunement: Pick<AttunementState, 'phase_shift_suggested' | 'confidence'>
+): Promise<SessionPhase> {
+  if (session.current_phase === 'converging') return 'converging' // latched — never reverts in v1
+
+  const confident =
+    attunement.phase_shift_suggested &&
+    (attunement.confidence ?? 0) >= PHASE_SHIFT_MIN_CONFIDENCE
+
+  if (!confident) return session.current_phase
+
+  await updatePhase(session.id, 'converging')
+  return 'converging'
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Receptivity (§8) — decayed offer-response TIMING aggregate. Read/write lives
+// here; the decay + delta math is pure in src/lib/intervention.ts. Never feeds
+// rejection_insights — dismiss/ignore means "not now," not "bad idea."
+// ─────────────────────────────────────────────────────────────────────────
+export async function getReceptivity(
+  session_id: string
+): Promise<{ receptivity: number; receptivity_updated_at: string }> {
+  const { data, error } = await db
+    .from('sessions')
+    .select('receptivity, receptivity_updated_at')
+    .eq('id', session_id)
+    .single()
+
+  if (error) throw new Error(`getReceptivity failed: ${error.message}`)
+  return data as { receptivity: number; receptivity_updated_at: string }
+}
+
+async function setReceptivity(session_id: string, receptivity: number): Promise<void> {
+  const { error } = await db
+    .from('sessions')
+    .update({ receptivity, receptivity_updated_at: new Date().toISOString() })
+    .eq('id', session_id)
+
+  if (error) throw new Error(`setReceptivity failed: ${error.message}`)
+}
+
+// Folds a single offer-response into the aggregate — called at each terminal
+// transition (dismiss, hard-timeout expire, "process now"), always BEFORE the
+// offer row becomes purge-eligible (§4f Retention). Returns the new score.
+export async function applyReceptivityResponse(
+  session_id: string,
+  response: ReceptivityResponse
+): Promise<number> {
+  const current = await getReceptivity(session_id)
+  const next = nextReceptivity({
+    current: current.receptivity,
+    lastUpdatedAt: current.receptivity_updated_at,
+    response,
+  })
+  await setReceptivity(session_id, next)
+  return next
 }

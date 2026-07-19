@@ -7,6 +7,7 @@ import { getOrCreateThread } from '../db/threads.js'
 import { getNodesBySession } from '../db/nodes.js'
 import { createLearning } from '../db/session-learnings.js'
 import { closeSession } from '../db/sessions.js'
+import { purgeResolvedForSession, purgeAbandonedWaiting } from '../db/intervention-offers.js'
 import type { SessionLearning, ContextNodeType } from '../../types/index.js'
 
 // Maps an Observer observation node_type onto the narrow session_learnings.type
@@ -90,6 +91,15 @@ export const sessionCompletePipeline = inngest.createFunction(
     // nodes can be attributed to this session_id after this point.
     await step.run('close-session', async () => {
       await closeSession(session_id)
+    })
+
+    // ── Step 4: Purge ephemeral intervention offers (§4f Retention, §8) ────
+    // The receptivity signal was already folded in at each terminal transition
+    // (dismiss route, agent-pipeline expire/manual steps) — this only deletes.
+    // The permanent "AI helped here" record lives on the thread + AiContribution.
+    await step.run('purge-offers', async () => {
+      await purgeResolvedForSession(session_id)
+      await purgeAbandonedWaiting()
     })
 
     logger.info('[pipeline:session-complete] done', {

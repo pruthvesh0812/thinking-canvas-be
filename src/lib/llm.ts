@@ -1,7 +1,7 @@
 import { google } from '@ai-sdk/google'
 import { embed } from 'ai'
 import type { GoogleLanguageModelOptions } from '@ai-sdk/google'
-
+import "dotenv/config"
 // ─────────────────────────────────────────────
 // Model registry — swap provider/model here only.
 // Never import @ai-sdk/google directly elsewhere.
@@ -9,10 +9,10 @@ import type { GoogleLanguageModelOptions } from '@ai-sdk/google'
 
 export const models = {
   // Orchestrator, Attunement Layer — fast, no thinking
-  fast: () => google('gemini-2.5-flash'),
+  fast: () => google('gemini-3.1-flash-lite-preview'),
 
   // Expander, Stress-Tester, Articulator — cheap content generation
-  content: () => google('gemini-2.5-flash-lite'),
+  content: () => google('gemini-3.1-flash-lite-preview'),
 
   // Observer, Outer Subconscious — deep reasoning (thinking:high)
   // Rejection Insights Engine   — light reasoning (thinking:low)

@@ -27,12 +27,13 @@
     "ai": "^6.0.201",
     "dotenv": "^17.4.2",
     "hono": "latest",
-    "inngest": "latest",
+    "inngest": "^4.7.0",
     "stripe": "latest",
     "zod": "latest"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "inngest-cli": "^1.31.0",
     "supabase": "^2.105.0",
     "tsx": "latest",
     "typescript": "^5",

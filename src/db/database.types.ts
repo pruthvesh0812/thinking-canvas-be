@@ -174,6 +174,7 @@ export type Database = {
       }
       canvases: {
         Row: {
+          canvas_version: number
           created_at: string
           id: string
           original_intent: string
@@ -181,6 +182,7 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          canvas_version?: number
           created_at?: string
           id?: string
           original_intent: string
@@ -188,6 +190,7 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          canvas_version?: number
           created_at?: string
           id?: string
           original_intent?: string
@@ -252,6 +255,76 @@ export type Database = {
           {
             foreignKeyName: "edges_to_node_id_fkey"
             columns: ["to_node_id"]
+            isOneToOne: false
+            referencedRelation: "nodes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      intervention_offers: {
+        Row: {
+          agent_role: string
+          anchor_node_ids: string[]
+          canvas_id: string
+          context_fingerprint: string
+          created_at: string
+          directness: string | null
+          headline: string | null
+          id: string
+          resolved_at: string | null
+          seq: number
+          session_id: string
+          status: string
+          trigger_node_id: string
+        }
+        Insert: {
+          agent_role: string
+          anchor_node_ids?: string[]
+          canvas_id: string
+          context_fingerprint: string
+          created_at?: string
+          directness?: string | null
+          headline?: string | null
+          id?: string
+          resolved_at?: string | null
+          seq: number
+          session_id: string
+          status?: string
+          trigger_node_id: string
+        }
+        Update: {
+          agent_role?: string
+          anchor_node_ids?: string[]
+          canvas_id?: string
+          context_fingerprint?: string
+          created_at?: string
+          directness?: string | null
+          headline?: string | null
+          id?: string
+          resolved_at?: string | null
+          seq?: number
+          session_id?: string
+          status?: string
+          trigger_node_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intervention_offers_canvas_id_fkey"
+            columns: ["canvas_id"]
+            isOneToOne: false
+            referencedRelation: "canvases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intervention_offers_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intervention_offers_trigger_node_id_fkey"
+            columns: ["trigger_node_id"]
             isOneToOne: false
             referencedRelation: "nodes"
             referencedColumns: ["id"]
@@ -518,7 +591,10 @@ export type Database = {
           current_phase: string
           end_time: string | null
           id: string
+          latest_seq: number
           node_sequence: string[]
+          receptivity: number
+          receptivity_updated_at: string
           start_time: string
           status: string
         }
@@ -527,7 +603,10 @@ export type Database = {
           current_phase?: string
           end_time?: string | null
           id?: string
+          latest_seq?: number
           node_sequence?: string[]
+          receptivity?: number
+          receptivity_updated_at?: string
           start_time?: string
           status?: string
         }
@@ -536,7 +615,10 @@ export type Database = {
           current_phase?: string
           end_time?: string | null
           id?: string
+          latest_seq?: number
           node_sequence?: string[]
+          receptivity?: number
+          receptivity_updated_at?: string
           start_time?: string
           status?: string
         }

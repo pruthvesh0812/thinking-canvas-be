@@ -1,12 +1,16 @@
 ---
-last-verified: 2026-06-18
-verified-against: ThinkingCanvas_Foundation.docx + TechnicalBuild.docx (post Observer canvas-map context model)
+last-verified: 2026-07-17
+verified-against: intervention-spectrum (judge, v1 phase latch, Observer content-only)
 stale-after-days: 90
 ---
 
 # CORE-CONCEPTS.md
 
 > **Load this when:** Any task involving agents, canvas behaviour, node/edge logic, ghost nodes, Multi-Canvas model, Rejection Insights, or the AI collaboration model.
+>
+> **See also:** `.ai/context/intervention-layer/` — *when* and *how loudly* the AI
+> offers help (the judge, the decide→wait→generate consent gate, the show ruleset).
+> This file covers *what* the roles are; that folder covers *when they fire*.
 
 ---
 
@@ -34,7 +38,7 @@ User
                     ├── start_time / end_time
                     ├── status: active | closed
                     ├── node_sequence: UUID[] — ONLY nodes created in THIS session, in order
-                    └── current_phase: diverging | converging
+                    └── current_phase: diverging | converging  (v1 = one-way latch, see below)
 ```
 
 **Critical distinctions:**
@@ -57,9 +61,12 @@ User
 | **Articulator** | Edge drawn between two existing nodes | Completes half-formed connection — 2-3 possible articulations | gemini-2.5-flash-lite (`models.content()`) |
 
 **Infrastructure components (not content agents):**
-- **Attunement Layer** — Classifies cognitive mode before Orchestrator. Model: gemini-2.5-flash (`models.fast()`, thinking:OFF)
-- **Orchestrator** — Routes to correct agent. Model: gemini-2.5-flash (`models.fast()`, thinking:OFF)
-- **Rejection Insights Engine** — Processes ghost rejections → negative constraints. Model: gemini-2.5-flash (`models.fast()` + `models.thinking('low')`)
+- **Attunement Layer** — Classifies cognitive mode before the judge. Model: gemini-2.5-flash (`models.fast()`, thinking:OFF)
+- **The Judge** — Maturity gate + single-best router in one call over the full canvas map. **Replaces the old Orchestrator** (`src/agents/orchestrator.ts` now exports `runJudge`). Model: `models.fast()` + `thinking:high`. See `.ai/context/intervention-layer/02-the-judge.md`.
+- **Rejection Insights Engine** — Processes *content* ghost rejections → negative constraints. Model: gemini-2.5-flash (`models.fast()` + `models.thinking('low')`). Note: **offer-response** (defer/dismiss/ignore) is a *timing* signal and feeds the separate **receptivity** model, never this engine.
+
+> **The Observer is a content agent only.** An earlier "Observer gate-mode" idea
+> (Observer holding maturity) was dropped — maturity now lives in the judge.
 
 ---
 
@@ -192,6 +199,19 @@ The Attunement Layer reads the QUALITY of thinking, not just the content:
 - **Declarative** → Expander uses closing questions ("what specifically", "what breaks this")
 
 The transition is never declared by the user — read from language quality + node velocity by Gemini 2.5 Flash. This is the system's most important behavioural feature.
+
+## Session Phase (v1 = one-way latch)
+
+`sessions.current_phase` gates the two phase-bound agents: Expander (diverging) and
+Stress-Tester (converging). In v1 it is a **single one-way latch**:
+`diverging → converging`, once per session, flipped only on a confident/sustained
+Attunement shift (hysteresis via `PHASE_SHIFT_MIN_CONFIDENCE`). Once converged it
+stays converged. Code: `maybeAdvancePhase()` in `src/db/sessions.ts`.
+
+Before this, `updatePhase()` had **zero call sites** — phase was frozen at
+`diverging` and the Stress-Tester could never fire. The latch is what makes the
+converging phase (and thus the Stress-Tester) reachable. Re-divergence and
+per-frontier phase are **deferred to the branching era** (`.ai/features/branching/story.md`).
 
 ---
 

@@ -5,16 +5,19 @@
 type LogData = Record<string, unknown>
 
 function write(level: 'info' | 'warn' | 'error', msg: string, data?: LogData) {
-  const entry = JSON.stringify({
-    level,
-    msg,
-    ts: new Date().toISOString(),
-    ...data,
-  })
+  // const entry = JSON.stringify({
+  //   level,
+  //   msg,
+  //   ts: new Date().toISOString(),
+  //   ...data,
+  // })
+
+  const ts = new Date().toISOString()
+  const log = `${level.toUpperCase()} : ${ts} | ${msg} | ${JSON.stringify(data)}`
   if (level === 'error') {
-    console.error(entry)
+    console.error(log)
   } else {
-    console.log(entry)
+    console.log(log)
   }
 }
 

@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-07-05
-verified-against: src/routes/stream.ts · src/streaming/* · src/pipeline/* · src/routes/ghost-status.ts (code, line-by-line)
+last-verified: 2026-07-17
+verified-against: intervention-spectrum (RedisMessage generalised: waiting/offer/withdraw)
 stale-after-days: 30
 ---
 
@@ -8,9 +8,9 @@ stale-after-days: 30
 
 > **Load this when:** Working on ghost node streaming, SSE endpoint, Upstash Redis pub/sub, spawn descriptor, ghost status updates, or Rejection Insights UI flow.
 >
-> **Frontend view of this contract:** `FRONTEND-CONTRACT.md` documents the same
-> surfaces from the consumer side (marker parsing, thread_id resolution, accept
-> persistence, reconnect behaviour). Any change here must be mirrored there.
+> **See also:** `.ai/context/intervention-layer/07-streaming-protocol.md` — the
+> intervention layer generalised this channel; the `waiting`/`offer`/`withdraw`
+> messages and the decide→wait→generate handshake live there.
 
 ---
 
@@ -103,20 +103,18 @@ type SpawnDescriptor = {
 
 ```typescript
 type RedisMessage =
+  | { type: 'waiting';  offer: InterventionOffer; timer_ms: number }  // mature + parked — starts the FE timer
+  | { type: 'offer';    offer: InterventionOffer }                    // low-intensity show (glow / sidebar card)
+  | { type: 'withdraw'; offer_id: string }                           // supersede / no-longer-mature
   | { type: 'spawn';  descriptor: SpawnDescriptor }
   | { type: 'chunk';  target: string; data: string }  // target = ghost_id
   | { type: 'done' }                                   // carries no ids — known P0 gap (FRONTEND-CONTRACT.md §11)
 ```
 
-The SSE route additionally emits `{ type: 'ping' }` every 25s (keepalive only —
-never published to Redis).
-
-**`chunk.target` is ALWAYS the context ghost_id** — there is no server-side
-splitting of the `[QUESTION]` section onto the question ghost. Agent output
-streams raw, including its inline markers (`[NODE_TYPE: …]`, `[QUESTION]`,
-`[ARTICULATION n]` — see the prompt constants in `src/agents/*.ts`); the
-frontend parses them. If a token-splitting layer is ever added to
-`src/streaming/tokens.ts`, update FRONTEND-CONTRACT.md §7.1 in the same change.
+`spawn`/`chunk`/`done` are the **maximal** rung (a full ghost pair streaming in);
+`waiting`/`offer`/`withdraw` are the quieter rungs added by the intervention layer.
+`stream.ts` is unchanged — it forwards every type verbatim and only special-cases
+`done`/`ping`. Full detail: `.ai/context/intervention-layer/07-streaming-protocol.md`.
 
 ---
 
