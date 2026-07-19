@@ -26,8 +26,9 @@ Receives canvas events from the frontend, runs the AI agent pipeline, and stream
 | Task | Load these files |
 |---|---|
 | Any agent work (create/modify/debug) | `CORE-CONCEPTS.md` + `AGENT-PIPELINE.md` |
+| Intervention — judge, offers, decide→wait→generate, show ruleset, receptivity, Impact Check | `.ai/context/intervention-layer/README.md` (+ the numbered sub-file) |
 | Serialization / thread / context window | `CORE-CONCEPTS.md` + `SERIALIZATION.md` |
-| Ghost streaming / SSE / Redis / spawn flag | `CANVAS-SYNC.md` |
+| Ghost streaming / SSE / Redis / spawn flag | `CANVAS-SYNC.md` + `.ai/context/intervention-layer/07-streaming-protocol.md` |
 | Rejection Insights Engine | `AGENT-PIPELINE.md` + `CANVAS-SYNC.md` |
 | Multi-Canvas / session model | `CORE-CONCEPTS.md` + `ARCHITECTURE.md` |
 | Database / schema / migrations | `DATABASE-SCHEMA.md` + `CORE-CONCEPTS.md` |
@@ -159,15 +160,15 @@ thinking-canvas-api/
 
 ## Non-Negotiables (every task)
 
-1. `canAgentFire()` before every Orchestrator route — never skip
-2. Tier enforcement in Orchestrator — server-side only
+1. `canAgentFire()` before every judge route — never skip (the judge replaced the Orchestrator; `src/agents/orchestrator.ts` now exports `runJudge`)
+2. Tier enforcement in the judge — server-side only, and never substitute a weaker agent (tier-locked best → upgrade offer, see intervention-layer)
 3. `canvases.original_intent` written once — never updated
 4. Agent system prompts are constants — never built from user input
 5. Agent threads are per-canvas (`canvas_id`) — never per-session
 6. Shared types in `types/index.ts` — never duplicate
 7. RLS on every Supabase table
 8. No Supabase Realtime — backend never pushes unsolicited state to frontend
-9. Redis pub/sub = ghost node streaming only — no canvas state over Redis
+9. Redis pub/sub = intervention signals (`waiting`/`offer`/`withdraw`/`spawn`/`chunk`/`done`) — the ghost stream is the maximal form; still no canvas *state* over Redis
 10. Load active rejection_insights before every agent call — inject as NEGATIVE CONSTRAINTS
 11. Ghost structure (nodes + edges) defined by frontend from spawn descriptor — agent generates content only
 12. Never import `@ai-sdk/google` outside `src/lib/llm.ts` — all model instantiation centralised there (see `LLM-LAYER.md`)

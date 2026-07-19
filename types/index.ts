@@ -62,6 +62,7 @@ export type Canvas = {
   user_id: string
   title: string
   original_intent: string   // immutable after creation
+  canvas_version: number    // context fingerprint — bumped by DB trigger on nodes/edges (§6)
   created_at: string
 }
 
@@ -71,6 +72,9 @@ export type Session = {
   status: 'active' | 'closed'
   current_phase: SessionPhase
   node_sequence: string[]   // ordered node IDs created in THIS session only
+  latest_seq: number        // monotonic version guard — latest intervention seq (§4e)
+  receptivity: number             // decayed offer-response aggregate, [0,1] (§8) — timing signal, never content
+  receptivity_updated_at: string  // last write, for the decay-toward-neutral calc
   start_time: string
   end_time: string | null
 }
@@ -91,6 +95,11 @@ export type Node = {
 // .content — see CORE-CONCEPTS.md) — narrows getAllByCanvas's select() to
 // match, instead of over-fetching every column for every node on the canvas.
 export type CanvasMapNode = Pick<Node, 'id' | 'session_id' | 'summary' | 'direction_marker'>
+
+// The judge reads the canvas map with COMPLETE content — maturity preconditions
+// live in the wording of nodes, which summaries lose (DESIGN §4b). Still excludes
+// the embedding column, which no map ever renders.
+export type JudgeMapNode = CanvasMapNode & Pick<Node, 'content'>
 
 export type Edge = {
   id: string
@@ -270,7 +279,38 @@ export type SpawnDescriptor = {
   }
 }
 
+// ─────────────────────────────────────────────
+// Intervention Spectrum — offer lifecycle (§4f)
+// ─────────────────────────────────────────────
+// The persisted handle for the decide → wait → generate handshake. The judge returns a
+// decision; the pipeline builds + persists an offer from it. Ephemeral — durable through
+// the active flow, then purged (session close + TTL). No retention guarantee.
+
+export type InterventionStatus =
+  | 'waiting' | 'shown' | 'pulled' | 'dismissed' | 'superseded' | 'expired'
+
+export type InterventionDirectness = 'direct' | 'subtle'
+
+export type InterventionOffer = {
+  id: string
+  canvas_id: string
+  session_id: string
+  agent_role: AgentRole
+  trigger_node_id: string
+  anchor_node_ids: string[]
+  seq: number                                 // per-session; vs sessions.latest_seq
+  context_fingerprint: string                 // change-detector, NOT content (§6)
+  directness: InterventionDirectness | null   // set at show
+  headline: string | null                     // set at show (backend-authored)
+  status: InterventionStatus
+  created_at: string
+  resolved_at: string | null
+}
+
 export type RedisMessage =
+  | { type: 'waiting'; offer: InterventionOffer; timer_ms: number }  // "mature + pipeline waiting" — starts the timer (§4d); timer_ms is receptivity-tuned (§8)
+  | { type: 'offer'; offer: InterventionOffer }      // low-intensity show — glow / sidebar card (§5)
+  | { type: 'withdraw'; offer_id: string }           // supersede / no-longer-mature (§4e)
   | { type: 'spawn'; descriptor: SpawnDescriptor }
   | { type: 'chunk'; target: string; data: string }  // target = ghost_id
   | { type: 'done' }
@@ -313,21 +353,39 @@ export type Subscription = {
 // ─────────────────────────────────────────────
 
 // POST /api/canvas-event
-// The frontend writes the node/edge row to Supabase directly, then notifies the
-// backend with just its id. The route reads the authoritative row back — edge
-// flags (both_existing, edge_type) live in the DB and are never recomputed or
-// trusted from the request body (see DATABASE-SCHEMA non-negotiable).
+// ORDERING CONTRACT: the frontend writes the row to Supabase first, then POSTs
+// here with the id. The backend always reads post-mutation state — the
+// fingerprint DB trigger has already fired and bumped canvas_version.
+// This applies equally to creates, updates, deletes, and re-parents
+// (edge.deleted + edge.created).
+//
+// Cross-repo dependency: the frontend must persist ALL mutations to Supabase —
+// not just creates. A delete the FE never wrote is invisible to the fingerprint
+// and to the judge's canvas-map read (DESIGN §4g).
 export const canvasEventSchema = z
   .object({
     canvas_id: z.string().uuid(),
     session_id: z.string().uuid(),
     node_id: z.string().uuid().optional(),
     edge_id: z.string().uuid().optional(),
-    event_type: z.enum(['node.created', 'edge.created']),
+    event_type: z.enum([
+      'node.created',
+      'node.updated',
+      'node.deleted',
+      'edge.created',
+      'edge.deleted',
+    ]),
   })
-  .refine((d) => (d.event_type === 'node.created' ? !!d.node_id : !!d.edge_id), {
-    message: 'node.created requires node_id; edge.created requires edge_id',
-  })
+  .refine(
+    (d) => {
+      const isNodeEvent =
+        d.event_type === 'node.created' ||
+        d.event_type === 'node.updated' ||
+        d.event_type === 'node.deleted'
+      return isNodeEvent ? !!d.node_id : !!d.edge_id
+    },
+    { message: 'node events require node_id; edge events require edge_id' }
+  )
 
 export type CanvasEvent = z.infer<typeof canvasEventSchema>
 

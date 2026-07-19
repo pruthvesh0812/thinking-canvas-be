@@ -13,9 +13,10 @@ import { streamRoute } from './routes/stream.js'
 import { ghostStatusRoute } from './routes/ghost-status.js'
 import { sessionRoute } from './routes/session.js'
 import { stripeRoute } from './routes/stripe.js'
+import { interventionRoute } from './routes/intervention.js'
 
 // Inngest pipeline functions
-import { agentPipeline } from './pipeline/agent-pipeline.js'
+import { agentPipeline, interventionImpactPipeline } from './pipeline/agent-pipeline.js'
 import { articulatorPipeline } from './pipeline/articulator-pipeline.js'
 import { outerSubPipeline } from './pipeline/outer-sub-pipeline.js'
 import { rejectionInsightsPipeline } from './pipeline/rejection-insights.js'
@@ -30,11 +31,12 @@ app.use('/*', cors({ origin: FRONTEND_URL }))
 
 app.get('/health', (c) => c.json({ status: 'ok' }))
 
-// Inngest worker — all five pipeline functions registered here.
+// Inngest worker — all six pipeline functions registered here.
 const inngestHandler = inngestServe({
   client: inngest,
   functions: [
     agentPipeline,
+    interventionImpactPipeline,
     articulatorPipeline,
     outerSubPipeline,
     rejectionInsightsPipeline,
@@ -49,6 +51,7 @@ app.route('/api', streamRoute)
 app.route('/api', ghostStatusRoute)
 app.route('/api', sessionRoute)
 app.route('/api', stripeRoute)
+app.route('/api', interventionRoute)
 
 serve({ fetch: app.fetch, port: 3001 }, (info) => {
   logger.info('[server] listening', { port: info.port })

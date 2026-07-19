@@ -1,12 +1,29 @@
 ---
-last-verified: 2026-06-18
-verified-against: ThinkingCanvas_TechnicalBuild.docx (post Observer canvas-map context model)
+last-verified: 2026-07-17
+verified-against: intervention-spectrum (judge replaces Orchestrator; decide→wait→generate handshake)
 stale-after-days: 30
 ---
 
 # AGENT-PIPELINE.md
 
-> **Load this when:** Creating/modifying agents, Inngest functions, Orchestrator routing, Attunement Layer, debounce logic, Redis spawn flow, Rejection Insights Engine, or Multi-Canvas threading.
+> **Load this when:** Creating/modifying agents, Inngest functions, judge routing, Attunement Layer, debounce logic, Redis spawn flow, Rejection Insights Engine, or Multi-Canvas threading.
+>
+> **See also:** `.ai/context/intervention-layer/` — the main `agent-pipeline.ts`
+> was restructured into the **decide→wait→generate handshake**, and the
+> **Orchestrator was retired in favour of the judge**. The sections below describe
+> the pre-intervention shape; the intervention-layer files describe what shipped.
+
+---
+
+## ⚠ Amended by the intervention layer
+
+The `canvas/node.created` debounced pipeline shown below still runs, but the primary
+proactive path is now `canvas/intervention.trigger` → **judge → publish `waiting` →
+`step.waitForEvent` → re-judge-if-changed → generate → show**. The **judge**
+(`src/agents/orchestrator.ts`, exports `runJudge`) folds maturity + single-best
+routing into one call over the full canvas map and **replaces the Orchestrator
+rule-list router** below. Read `.ai/context/intervention-layer/01-trigger-and-handshake.md`
+and `02-the-judge.md` before touching `agent-pipeline.ts`.
 
 ---
 
@@ -78,7 +95,29 @@ Inngest worker
 
 ---
 
-## Orchestrator Routing Rules (priority order)
+## Routing — the judge (replaces the Orchestrator rule list)
+
+The old priority-ordered rule list below is **retired**. Routing for the proactive
+path is now the **judge**: one `thinking:high` call over Attunement + the full
+canvas map returns `{ mature, route, locus_node_ids, headroom, confidence }`. It
+picks the **single best** agent (never a ranked set), enforces tier server-side
+(tier-locked → upgrade offer, never a weaker substitute), and holds silently when
+nothing is mature. Phase gates the two phase-bound agents via a v1 one-way
+`diverging → converging` latch (`maybeAdvancePhase` in `src/db/sessions.ts`). Full
+rubric: `.ai/context/intervention-layer/02-the-judge.md`.
+
+The immediate **explicit-edge** pipelines never used the Orchestrator and are
+unchanged:
+
+```typescript
+edge between existing nodes (both_existing=true, NOT question) → ARTICULATOR (immediate)
+edge_type === 'question'                                        → OUTER_SUBCONSCIOUS (immediate)
+```
+
+The Observer remains a content agent (continuous + Session Complete), never a judge
+route.
+
+<details><summary>Retired Orchestrator rule list (historical)</summary>
 
 ```typescript
 1. edge between existing nodes (both_existing=true, NOT question) → ARTICULATOR (immediate)
@@ -88,6 +127,8 @@ Inngest worker
 5. phase === 'diverging'  && last_action === 'node_created'        → EXPANDER
 6. always in background (queued, not interrupting)                 → OBSERVER
 ```
+
+</details>
 
 ---
 
