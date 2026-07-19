@@ -3,6 +3,8 @@ import Stripe from 'stripe'
 import { logger } from '../lib/logger.js'
 import { upsertSubscription } from '../db/subscriptions.js'
 import type { SubscriptionTier, Subscription } from '../../types/index.js'
+import 'dotenv/config'
+
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '')
 

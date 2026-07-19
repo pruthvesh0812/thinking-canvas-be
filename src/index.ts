@@ -30,8 +30,13 @@ const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:3000'
 app.use('/*', cors({ origin: FRONTEND_URL }))
 
 app.get('/health', (c) => c.json({ status: 'ok' }))
-
-// Inngest worker — all six pipeline functions registered here.
+// API routes — all mounted under /api.
+app.route('/api', canvasEventRoute)
+app.route('/api', streamRoute)
+app.route('/api', ghostStatusRoute)
+app.route('/api', sessionRoute)
+app.route('/api', stripeRoute)
+// Inngest worker — all five pipeline functions registered here.
 const inngestHandler = inngestServe({
   client: inngest,
   functions: [
@@ -45,13 +50,6 @@ const inngestHandler = inngestServe({
 })
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', (c) => inngestHandler(c))
 
-// API routes — all mounted under /api.
-app.route('/api', canvasEventRoute)
-app.route('/api', streamRoute)
-app.route('/api', ghostStatusRoute)
-app.route('/api', sessionRoute)
-app.route('/api', stripeRoute)
-app.route('/api', interventionRoute)
 
 serve({ fetch: app.fetch, port: 3001 }, (info) => {
   logger.info('[server] listening', { port: info.port })

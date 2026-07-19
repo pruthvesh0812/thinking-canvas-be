@@ -1,4 +1,5 @@
 import { Redis } from '@upstash/redis'
+import 'dotenv/config'
 
 // Upstash Redis singleton — pub/sub for ghost node streaming ONLY.
 // Channel pattern: canvas:stream:${sessionId}
