@@ -36,17 +36,30 @@ const directionalSummarySchema = z.object({
 async function enrichNode(node_id: string): Promise<void> {
   const node = await getNode(node_id)
 
-  const { object } = await generateObject({
+  // The embedding only needs the summary as a fallback for empty content, so
+  // it doesn't have to wait on the summary call in the common (non-empty)
+  // case — run both concurrently and only chain them when there's no content.
+  const summaryPromise = generateObject({
     model: models.fast(),
     schema: directionalSummarySchema,
     system: DIRECTIONAL_SUMMARY_PROMPT,
     prompt: node.content ?? '',
     providerOptions: { google: models.thinking('low') },
   })
-  await updateSummary(node_id, object.summary, object.direction_marker)
 
-  const embedding = await generateEmbedding(node.content ?? object.summary)
-  await updateEmbedding(node_id, embedding)
+  let object: Awaited<typeof summaryPromise>['object']
+  let embedding: number[]
+  if (node.content) {
+    ;[{ object }, embedding] = await Promise.all([summaryPromise, generateEmbedding(node.content)])
+  } else {
+    ;({ object } = await summaryPromise)
+    embedding = await generateEmbedding(object.summary)
+  }
+
+  await Promise.all([
+    updateSummary(node_id, object.summary, object.direction_marker),
+    updateEmbedding(node_id, embedding),
+  ])
 }
 
 export const canvasEventRoute = new Hono()
@@ -100,25 +113,35 @@ canvasEventRoute.post('/canvas-event', async (c) => {
       const node_ids = parsed.data.node_ids!
       const agent_role = parsed.data.agent_role!
       const session = await getSession(session_id)
+      const alreadySequenced = new Set(session.node_sequence)
 
-      for (const node_id of node_ids) {
-        await enrichNode(node_id)
+      // node_ids are independent of each other, so enrich/append/record them
+      // concurrently. `alreadySequenced` is tracked locally (rather than
+      // re-reading `session.node_sequence`, which never changes underneath
+      // this request) so a duplicate id within the same payload still only
+      // appends once.
+      await Promise.all(
+        node_ids.map(async (node_id) => {
+          await enrichNode(node_id)
 
-        // Idempotent sequence append — a retried ghost.accepted must not add a
-        // duplicate. The accepted node is not in node_sequence yet (the FE does
-        // not send node.created for accepted ghosts), so the first call appends.
-        if (!session.node_sequence.includes(node_id)) {
-          await appendToNodeSequence(session_id, node_id)
-        }
+          // Idempotent sequence append — a retried ghost.accepted must not add
+          // a duplicate. The accepted node is not in node_sequence yet (the FE
+          // does not send node.created for accepted ghosts), so the first call
+          // appends.
+          if (!alreadySequenced.has(node_id)) {
+            alreadySequenced.add(node_id)
+            await appendToNodeSequence(session_id, node_id)
+          }
 
-        await recordContribution({
-          canvas_id,
-          session_id,
-          agent_role,
-          ghost_id: node_id,
-          status: 'accepted',
+          await recordContribution({
+            canvas_id,
+            session_id,
+            agent_role,
+            ghost_id: node_id,
+            status: 'accepted',
+          })
         })
-      }
+      )
 
       logger.info('[route:canvas-event] ghost.accepted enriched', {
         canvas_id,
