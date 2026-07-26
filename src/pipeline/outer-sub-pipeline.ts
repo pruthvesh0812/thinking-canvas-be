@@ -111,7 +111,13 @@ export const outerSubPipeline = inngest.createFunction(
     // ── Step 6: Persist the combined context+question response as a single ──
     // pending ghost pair turn FIRST, then publish an attribution-carrying DONE
     // (task-01). Persist before publish: a failed append aborts before `done`.
-    await step.run('finalize', async () => {
+    //
+    // Split into two steps: `appendMessage` is a non-idempotent DB write, and
+    // Inngest only checkpoints a step.run callback once it completes — a
+    // throw anywhere inside replays the whole callback on retry. Keeping the
+    // append in its own step means a retry of the Redis publish below can
+    // never replay it into a duplicate thread turn.
+    const { thread_id, turn_index } = await step.run('persist-turn', async () => {
       const thread = await getOrCreateThread(canvas_id, 'outer_subconscious')
       const ghost_pair: GhostPair = {
         triggered_by_node_id: from_node_id,
@@ -133,9 +139,18 @@ export const outerSubPipeline = inngest.createFunction(
           m.turn_type === 'ghost_pair' &&
           m.ghost_pair.context_ghost_id === descriptor.context_node.ghost_id
       )
+      if (turn_index === -1) {
+        throw new Error(
+          `[pipeline:outer-sub] persist-turn: appended ghost_pair turn not found on thread ${thread.id}`
+        )
+      }
 
+      return { thread_id: thread.id, turn_index }
+    })
+
+    await step.run('publish-done', async () => {
       await publishDone(session_id, {
-        thread_id: thread.id,
+        thread_id,
         turn_index,
         trigger_node_id: from_node_id,
         context_ghost_id: descriptor.context_node.ghost_id,

@@ -433,7 +433,14 @@ export const agentPipeline = inngest.createFunction(
     // turn attribution (thread_id/turn_index/ghost ids) and, for any FE that
     // finalizes on it, marks the end of the generation. Publishing the offer or
     // persisting the turn after `done` would drop/race them.
-    await step.run('finalize', async () => {
+    //
+    // This is its own step (not folded into the publish step below) because
+    // `appendMessage` is a non-idempotent DB write. Inngest only checkpoints a
+    // step.run callback once it *completes*; a throw anywhere inside a step
+    // reruns the whole callback from the top on retry. Keeping the append as
+    // the last fallible call in a dedicated step means a retry of a later
+    // Redis publish can never replay it into a duplicate thread turn.
+    const { thread_id, turn_index, shownOffer } = await step.run('persist-turn', async () => {
       const { receptivity } = await getReceptivity(session_id)
       const directness = decideDirectness(attentionState, 'standard', receptivity)
       const headline = authorHeadline(responseText, DEFAULT_CONTEXT_TYPE[finalRoute])
@@ -441,9 +448,6 @@ export const agentPipeline = inngest.createFunction(
       await updateOfferStatus(offer.id, 'shown', { directness, headline })
       const shownOffer = { ...offer, status: 'shown' as const, directness, headline }
 
-      // Persist the ghost_pair turn FIRST — a failure here must propagate and
-      // abort before any `done` is published (never leave the FE waiting on a
-      // `done` for a turn that never persisted).
       const thread = await getOrCreateThread(canvas_id, finalRoute)
       const ghost_pair: GhostPair = {
         triggered_by_node_id: node_id,
@@ -468,7 +472,18 @@ export const agentPipeline = inngest.createFunction(
           m.turn_type === 'ghost_pair' &&
           m.ghost_pair.context_ghost_id === descriptor.context_node.ghost_id
       )
+      if (turn_index === -1) {
+        throw new Error(
+          `[pipeline:agent] persist-turn: appended ghost_pair turn not found on thread ${thread.id}`
+        )
+      }
 
+      return { thread_id: thread.id, turn_index, shownOffer }
+    })
+
+    // Isolated from persist-turn above for the same reason: decrementing is a
+    // non-idempotent counter mutation, so it gets its own checkpoint.
+    await step.run('decrement-deferrals', async () => {
       const active = await getActiveByCanvas(canvas_id)
       let decremented = 0
       for (const insight of active) {
@@ -478,14 +493,17 @@ export const agentPipeline = inngest.createFunction(
         }
       }
       if (decremented > 0) {
-        logger.info('[pipeline:agent] step:finalize deferrals decremented', { canvas_id, decremented })
+        logger.info('[pipeline:agent] step:decrement-deferrals decremented', { canvas_id, decremented })
       }
+    })
 
-      // Publish the offer's show signal (directness/headline — the Show
-      // ruleset's output), THEN `done` LAST.
+    // Publish the offer's show signal (directness/headline — the Show
+    // ruleset's output), THEN `done` LAST. Both run after the turn is
+    // durably persisted (previous step), never before.
+    await step.run('publish-results', async () => {
       await publishOffer(session_id, shownOffer)
       await publishDone(session_id, {
-        thread_id: thread.id,
+        thread_id,
         turn_index,
         trigger_node_id: node_id,
         context_ghost_id: descriptor.context_node.ghost_id,
