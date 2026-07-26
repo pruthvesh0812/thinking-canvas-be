@@ -46,7 +46,7 @@ Then fill in each value:
 | `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` | Inngest dashboard. Can be left blank for local dev — the Inngest client falls back to dev mode against the local dev server (step 5). |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse project settings → API keys |
 | `LANGFUSE_BASE_URL` | Only set when self-hosting Langfuse; omit to use Langfuse Cloud |
-| `FRONTEND_URL` | URL of the running `thinking-canvas-web` frontend (CORS origin). Defaults to `*` if unset. |
+| `FRONTEND_URL` | URL of the running `thinking-canvas-web` frontend (CORS origin). Defaults to `http://localhost:3000` if unset (`src/index.ts`). |
 
 ## 3. Start local Supabase and run migrations
 

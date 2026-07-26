@@ -6,7 +6,7 @@ import { streamAgentOutput, publishDone } from '../streaming/tokens.js'
 import { streamArticulator } from '../agents/articulator.js'
 import { serialize } from '../serializer/index.js'
 import { getCanvas } from '../db/canvases.js'
-import { getOrCreateThread, appendMessage } from '../db/threads.js'
+import { getOrCreateThread, appendMessage, getById } from '../db/threads.js'
 import type { GhostPair } from '../../types/index.js'
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -88,7 +88,12 @@ export const articulatorPipeline = inngest.createFunction(
         trigger_node_id: from_node_id,
         serialized_context: context,
       })
-      return streamAgentOutput(stream.textStream, descriptor.context_node.ghost_id, session_id)
+      // Articulator never produces a question node — no [QUESTION] split.
+      return streamAgentOutput(
+        stream.textStream,
+        { contextGhostId: descriptor.context_node.ghost_id, questionGhostId: null },
+        session_id
+      )
     })
     logger.info('[pipeline:articulator] step:stream complete', {
       canvas_id,
@@ -96,11 +101,16 @@ export const articulatorPipeline = inngest.createFunction(
       response_chars: responseText.length,
     })
 
-    // ── Step 6: Publish DONE and persist the response as a pending ghost ───
-    // pair on the thread, awaiting the user's accept/reject.
-    await step.run('finalize', async () => {
-      await publishDone(session_id)
-
+    // ── Step 6: Persist the response as a pending ghost pair on the thread ──
+    // FIRST, then publish an attribution-carrying DONE (task-01). Persist
+    // before publish: a failed append must abort before any `done` is sent.
+    //
+    // Split into two steps: `appendMessage` is a non-idempotent DB write, and
+    // Inngest only checkpoints a step.run callback once it completes — a
+    // throw anywhere inside replays the whole callback on retry. Keeping the
+    // append in its own step means a retry of the Redis publish below can
+    // never replay it into a duplicate thread turn.
+    const { thread_id, turn_index } = await step.run('persist-turn', async () => {
       const thread = await getOrCreateThread(canvas_id, 'articulator')
       const ghost_pair: GhostPair = {
         triggered_by_node_id: from_node_id,
@@ -114,6 +124,30 @@ export const articulatorPipeline = inngest.createFunction(
         content: responseText,
         ghost_pair,
         timestamp: new Date().toISOString(),
+      })
+
+      const persisted = await getById(thread.id)
+      const turn_index = (persisted?.messages ?? []).findIndex(
+        (m) =>
+          m.turn_type === 'ghost_pair' &&
+          m.ghost_pair.context_ghost_id === descriptor.context_node.ghost_id
+      )
+      if (turn_index === -1) {
+        throw new Error(
+          `[pipeline:articulator] persist-turn: appended ghost_pair turn not found on thread ${thread.id}`
+        )
+      }
+
+      return { thread_id: thread.id, turn_index }
+    })
+
+    await step.run('publish-done', async () => {
+      await publishDone(session_id, {
+        thread_id,
+        turn_index,
+        trigger_node_id: from_node_id,
+        context_ghost_id: descriptor.context_node.ghost_id,
+        question_ghost_id: null,
       })
     })
 

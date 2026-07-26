@@ -6,8 +6,9 @@ import { models, generateEmbedding } from '../lib/llm.js'
 import { inngest } from '../lib/inngest.js'
 import { logger } from '../lib/logger.js'
 import { getNode, updateSummary, updateEmbedding } from '../db/nodes.js'
-import { appendToNodeSequence } from '../db/sessions.js'
+import { appendToNodeSequence, getSession } from '../db/sessions.js'
 import { getEdge } from '../db/edges.js'
+import { recordContribution } from '../db/ai-contributions.js'
 
 // System prompt is a constant — never interpolated from user data.
 const DIRECTIONAL_SUMMARY_PROMPT = `
@@ -28,6 +29,39 @@ const directionalSummarySchema = z.object({
   direction_marker: z.enum(['establishes', 'questions', 'contradicts', 'explores']),
 })
 
+// Enrich one node in place: directional summary (gemini flash, thinking:low,
+// structured) + embedding over its text. Idempotent — both writes are
+// overwrites — so it is safe to re-run on a node.updated or a retried
+// ghost.accepted.
+async function enrichNode(node_id: string): Promise<void> {
+  const node = await getNode(node_id)
+
+  // The embedding only needs the summary as a fallback for empty content, so
+  // it doesn't have to wait on the summary call in the common (non-empty)
+  // case — run both concurrently and only chain them when there's no content.
+  const summaryPromise = generateObject({
+    model: models.fast(),
+    schema: directionalSummarySchema,
+    system: DIRECTIONAL_SUMMARY_PROMPT,
+    prompt: node.content ?? '',
+    providerOptions: { google: models.thinking('low') },
+  })
+
+  let object: Awaited<typeof summaryPromise>['object']
+  let embedding: number[]
+  if (node.content) {
+    ;[{ object }, embedding] = await Promise.all([summaryPromise, generateEmbedding(node.content)])
+  } else {
+    ;({ object } = await summaryPromise)
+    embedding = await generateEmbedding(object.summary)
+  }
+
+  await Promise.all([
+    updateSummary(node_id, object.summary, object.direction_marker),
+    updateEmbedding(node_id, embedding),
+  ])
+}
+
 export const canvasEventRoute = new Hono()
 
 // POST /api/canvas-event — the single entry point for every user canvas action.
@@ -46,23 +80,11 @@ canvasEventRoute.post('/canvas-event', async (c) => {
   try {
     if (event_type === 'node.created' || event_type === 'node.updated') {
       const node_id = parsed.data.node_id!
-      const node = await getNode(node_id)
 
-      // Directional summary — gemini-2.5-flash, thinking:low, structured output.
-      // Runs on BOTH node.created and node.updated: an edit makes the create-time
-      // summary + embedding stale (DESIGN §4g — node.updated must re-enrich).
-      const { object } = await generateObject({
-        model: models.fast(),
-        schema: directionalSummarySchema,
-        system: DIRECTIONAL_SUMMARY_PROMPT,
-        prompt: node.content ?? '',
-        providerOptions: { google: models.thinking('low') },
-      })
-      await updateSummary(node_id, object.summary, object.direction_marker)
-
-      // Embedding over the node's actual text (gemini-embedding) for semantic recall.
-      const embedding = await generateEmbedding(node.content ?? object.summary)
-      await updateEmbedding(node_id, embedding)
+      // Directional summary + embedding. Runs on BOTH node.created and
+      // node.updated: an edit makes the create-time enrichment stale (DESIGN
+      // §4g — node.updated must re-enrich).
+      await enrichNode(node_id)
 
       if (event_type === 'node.created') {
         await appendToNodeSequence(session_id, node_id)
@@ -75,6 +97,58 @@ canvasEventRoute.post('/canvas-event', async (c) => {
         logger.info('[route:canvas-event] node.updated enriched', { canvas_id, session_id, node_id })
       }
 
+      return c.json({ ok: true })
+    }
+
+    if (event_type === 'ghost.accepted') {
+      // The FE has already written the accepted ghost's nodes/edges (owner:'ai')
+      // to Supabase; this is the explicit "enrich these AI nodes" signal. Run
+      // the same enrich as node.created (summary + embedding + sequence append)
+      // and write the first-ever ai_contributions audit rows.
+      //
+      // Deliberately does NOT inngest.send('canvas/node.created'): an AI
+      // acceptance is not a new-node event, so it never re-triggers an agent on
+      // the ghost's own output — independent of whether anything currently
+      // subscribes to node.created.
+      const node_ids = parsed.data.node_ids!
+      const agent_role = parsed.data.agent_role!
+      const session = await getSession(session_id)
+      const alreadySequenced = new Set(session.node_sequence)
+
+      // node_ids are independent of each other, so enrich/append/record them
+      // concurrently. `alreadySequenced` is tracked locally (rather than
+      // re-reading `session.node_sequence`, which never changes underneath
+      // this request) so a duplicate id within the same payload still only
+      // appends once.
+      await Promise.all(
+        node_ids.map(async (node_id) => {
+          await enrichNode(node_id)
+
+          // Idempotent sequence append — a retried ghost.accepted must not add
+          // a duplicate. The accepted node is not in node_sequence yet (the FE
+          // does not send node.created for accepted ghosts), so the first call
+          // appends.
+          if (!alreadySequenced.has(node_id)) {
+            alreadySequenced.add(node_id)
+            await appendToNodeSequence(session_id, node_id)
+          }
+
+          await recordContribution({
+            canvas_id,
+            session_id,
+            agent_role,
+            ghost_id: node_id,
+            status: 'accepted',
+          })
+        })
+      )
+
+      logger.info('[route:canvas-event] ghost.accepted enriched', {
+        canvas_id,
+        session_id,
+        node_ids,
+        agent_role,
+      })
       return c.json({ ok: true })
     }
 

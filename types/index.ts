@@ -313,7 +313,23 @@ export type RedisMessage =
   | { type: 'withdraw'; offer_id: string }           // supersede / no-longer-mature (§4e)
   | { type: 'spawn'; descriptor: SpawnDescriptor }
   | { type: 'chunk'; target: string; data: string }  // target = ghost_id
-  | { type: 'done' }
+  // Server-side marker split: the token layer strips the agent's [NODE_TYPE: x]
+  // marker and emits this instead of streaming it as ghost text. target = the
+  // context ghost id; the FE restyles that ghost to node_type.
+  | { type: 'node_type'; target: string; node_type: ContextNodeType }
+  // Attribution-carrying done. The ghost_pair turn is persisted BEFORE this is
+  // published, so thread_id/turn_index resolve the turn for POST /api/ghost-status
+  // without polling. Published LAST in a generation (it tears down the SSE
+  // connection — see src/routes/stream.ts is now hold-open, but ordering still
+  // matters for any FE that finalizes on done).
+  | {
+      type: 'done'
+      thread_id: string
+      turn_index: number
+      trigger_node_id: string
+      context_ghost_id: string
+      question_ghost_id: string | null
+    }
 
 // ─────────────────────────────────────────────
 // Audit types
@@ -368,23 +384,40 @@ export const canvasEventSchema = z
     session_id: z.string().uuid(),
     node_id: z.string().uuid().optional(),
     edge_id: z.string().uuid().optional(),
+    // ghost.accepted carries the accepted ghost node id(s) — a pair accept is
+    // 1–2 nodes (context, optional question) — plus the agent_role the FE
+    // already knows from the spawn descriptor (used for the audit row; never
+    // re-derived on the backend).
+    node_ids: z.array(z.string().uuid()).min(1).optional(),
+    agent_role: z
+      .enum(['expander', 'stress_tester', 'observer', 'outer_subconscious', 'articulator'])
+      .optional(),
     event_type: z.enum([
       'node.created',
       'node.updated',
       'node.deleted',
       'edge.created',
       'edge.deleted',
+      'ghost.accepted',
     ]),
   })
   .refine(
     (d) => {
+      // ghost.accepted enriches accepted AI nodes: requires the node ids +
+      // agent_role for the audit; no single node_id/edge_id.
+      if (d.event_type === 'ghost.accepted') {
+        return !!d.node_ids && d.node_ids.length > 0 && !!d.agent_role
+      }
       const isNodeEvent =
         d.event_type === 'node.created' ||
         d.event_type === 'node.updated' ||
         d.event_type === 'node.deleted'
       return isNodeEvent ? !!d.node_id : !!d.edge_id
     },
-    { message: 'node events require node_id; edge events require edge_id' }
+    {
+      message:
+        'node events require node_id; edge events require edge_id; ghost.accepted requires node_ids + agent_role',
+    }
   )
 
 export type CanvasEvent = z.infer<typeof canvasEventSchema>
