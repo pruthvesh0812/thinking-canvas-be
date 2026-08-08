@@ -106,6 +106,14 @@ curl http://localhost:3001/health
 # {"status":"ok"}
 ```
 
+> **Note:** this repo's `.npmrc` sets `ignore-scripts=true` (a supply-chain
+> guard). `inngest-cli` needs its `postinstall` script to download the CLI
+> binary, so `npm run inngest:dev` rebuilds just that one pinned
+> devDependency with scripts re-enabled before launching it — no global
+> opt-out of `ignore-scripts` needed. If you ever see
+> `Error: Inngest CLI binary not found`, run
+> `npm rebuild --ignore-scripts=false inngest-cli` and try again.
+
 ## Available scripts
 
 | Script | What it does |

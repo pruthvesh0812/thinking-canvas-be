@@ -12,7 +12,7 @@
     "migrate:prod": "supabase db push --linked",
     "gen:types:local": "supabase gen types typescript --local > src/db/database.types.ts",
     "gen:types:prod": "supabase gen types typescript --linked > src/db/database.types.ts",
-    "inngest:dev": "npx inngest-cli@latest dev",
+    "inngest:dev": "npm rebuild --ignore-scripts=false inngest-cli && inngest-cli dev",
     "seed:prompts": "tsx --env-file=.env scripts/seed-prompts.ts"
   },
   "dependencies": {
