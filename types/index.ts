@@ -88,6 +88,14 @@ export type Node = {
   summary: string | null            // gemini-2.5-flash directional summary
   direction_marker: DirectionMarker | null
   embedding: number[] | null        // VECTOR(3072) — gemini-embedding-2
+  // Frontend-owned layout — restored on refetch so the canvas comes back
+  // exactly as the user left it. Backend never reads or writes these; agent
+  // serialization is content-oriented, not spatial. Nullable to keep
+  // pre-migration rows valid; new rows carry all four.
+  x: number | null
+  y: number | null
+  width: number | null
+  height: number | null
   created_at: string
 }
 

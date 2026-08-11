@@ -70,6 +70,7 @@ notify means the node never gets a summary/embedding, never enters
 | Column | Written by | Notes |
 |---|---|---|
 | `id, canvas_id, session_id, owner, content, created_at` | **Frontend** | `owner`: `'human'` for user nodes, `'ai'` for accepted ghosts. `content` NULL is legal and meaningful ("empty node" = unarticulated thought). |
+| `x, y, width, height` | **Frontend** | Canvas layout — written on create AND on every move/resize commit, so a refetch restores the exact previous position and size. Backend never reads or writes these; agent serialization is content-oriented, not spatial. All four are nullable in the schema for backward-compatibility with pre-migration rows, but new rows should always carry them. No Plane 2 notify needed on move/resize — the backend is intentionally blind to spatial changes (they don't invalidate a fingerprint or wake an agent). |
 | `summary, direction_marker, embedding` | **Backend** | Filled asynchronously after `POST /api/canvas-event` (node.created). FE must render nodes with these NULL and never write them. |
 
 ### 3.2 `edges` — the frontend computes the routing flags
