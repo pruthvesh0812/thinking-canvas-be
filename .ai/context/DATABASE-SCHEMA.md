@@ -107,6 +107,8 @@ A directed connection between two nodes. Created by the user (frontend writes di
 | `to_node_id` | `UUID FK → nodes` | Target node |
 | `edge_type` | `TEXT NOT NULL` | `logical`, `doubt`, `question`, or `associative`. `question` edges trigger Outer Subconscious immediately. |
 | `both_existing` | `BOOLEAN` | `true` when both `from_node_id` and `to_node_id` were already on the canvas before this edge was drawn. `true` triggers Articulator pipeline immediately (bypasses debounce). |
+| `from_handle` | `TEXT nullable` | Which side of the source node the edge attaches to — `TOP` / `RIGHT` / `LEFT` / `BOTTOM`. **Frontend-owned** — written on edge create, read on refetch to reattach visually. Backend never touches. CHECK constraint enforces the four values (NULL passes). |
+| `to_handle` | `TEXT nullable` | Which side of the target node the edge attaches to. Same ownership rules and CHECK constraint as `from_handle`. |
 | `created_at` | `TIMESTAMPTZ` | Creation timestamp |
 
 **RLS:** Access via canvas ownership.

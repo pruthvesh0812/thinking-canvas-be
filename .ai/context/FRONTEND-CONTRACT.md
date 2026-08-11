@@ -84,6 +84,16 @@ correctly at insert time (the backend reads them verbatim, never recomputes):
   canvas before the edge was drawn → Articulator. A drag-out-to-new-node edge
   is `both_existing: false`.
 
+Two additional columns are also frontend-owned, purely for restoring the
+exact visual reconnection on refetch (backend never reads them):
+
+- `from_handle`, `to_handle`: `'TOP' | 'RIGHT' | 'LEFT' | 'BOTTOM'` — which
+  side of the source / target node the edge attaches to (React Flow handle
+  id). Written on edge create; a CHECK constraint on the table rejects any
+  other value (NULL passes for backward-compatibility with pre-migration
+  rows). No Plane 2 notify on a handle-only change — the backend is
+  intentionally blind to visual reconnection.
+
 ### 3.3 Other tables the FE touches
 
 | Table | FE access | Purpose |

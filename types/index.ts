@@ -21,6 +21,11 @@ export type ContextNodeType =
 
 export type EdgeType = 'logical' | 'doubt' | 'question' | 'associative'
 
+// Which side of a node the edge attaches to. Frontend-owned (React Flow
+// handle id); backend never reads it. Enforced by CHECK constraint on the
+// edges table.
+export type EdgeHandle = 'TOP' | 'RIGHT' | 'LEFT' | 'BOTTOM'
+
 export type DirectionMarker = 'establishes' | 'questions' | 'contradicts' | 'explores'
 
 export type GhostStatus =
@@ -117,6 +122,12 @@ export type Edge = {
   to_node_id: string
   edge_type: EdgeType
   both_existing: boolean
+  // Frontend-owned handle attachments — restored on refetch so an edge
+  // reattaches to the exact same sides it left. Backend never reads or
+  // writes these; agent pipelines route off edge_type / both_existing only.
+  // Nullable to keep pre-migration edges valid.
+  from_handle: EdgeHandle | null
+  to_handle: EdgeHandle | null
   created_at: string
 }
 
