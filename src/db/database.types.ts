@@ -338,10 +338,14 @@ export type Database = {
           created_at: string
           direction_marker: string | null
           embedding: string | null
+          height: number | null
           id: string
           owner: string
           session_id: string
           summary: string | null
+          width: number | null
+          x: number | null
+          y: number | null
         }
         Insert: {
           canvas_id: string
@@ -349,10 +353,14 @@ export type Database = {
           created_at?: string
           direction_marker?: string | null
           embedding?: string | null
+          height?: number | null
           id?: string
           owner?: string
           session_id: string
           summary?: string | null
+          width?: number | null
+          x?: number | null
+          y?: number | null
         }
         Update: {
           canvas_id?: string
@@ -360,10 +368,14 @@ export type Database = {
           created_at?: string
           direction_marker?: string | null
           embedding?: string | null
+          height?: number | null
           id?: string
           owner?: string
           session_id?: string
           summary?: string | null
+          width?: number | null
+          x?: number | null
+          y?: number | null
         }
         Relationships: [
           {
