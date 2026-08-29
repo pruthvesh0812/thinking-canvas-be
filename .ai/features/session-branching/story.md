@@ -13,6 +13,50 @@ depends_on: "intervention-spectrum, branching (specializes it — see Relationsh
 > that motivated writing this down (`src/routes/session.ts`, shipped
 > 2026-08-16).
 
+## Note to whoever picks this up (possibly future me)
+
+Don't treat the "Recommended mechanism" / "recommended starting point" calls
+below as settled — they were the best answer available in a single
+discussion, not a verdict. Before writing a single line of implementation,
+**re-derive this from scratch, and do it on ThinkingCanvas itself** — dogfood
+the product on its own hardest pending design problem: open a canvas, drop
+the sections below in as nodes, let the Expander/Stress-Tester/Observer loose
+on it, actually diverge and converge rather than rubber-stamping what's
+already written here. If the tool is worth anything, using it on this problem
+should produce a better answer than the one draft below did.
+
+At minimum, re-think:
+
+1. **The optimal way to isolate node/edge visibility per branch** — is
+   `branch_path UUID[]` actually the best mechanism, or just the first one
+   that came to mind? Stress-test it against real fan-out (hundreds of
+   forks on one canvas — does a GIN-indexed array-contains still hold up?)
+   and against every read path in the Blast Radius table, not just the
+   obvious ones.
+2. **The optimal way to isolate context per branch** — the agent-thread
+   question (copy-on-fork vs. filter-at-read) was left explicitly
+   unresolved below. Don't default to "copy-on-fork" just because it was
+   listed first. Weigh what happens to `rejection_insights`, receptivity,
+   and Observer structures under each option too — the story below only
+   worked through threads in detail.
+3. **Optimize search and retrieval of context** — once visibility is
+   correctly scoped, make sure it's not just correct but *fast*: what does
+   a judge/canvas-map read cost on a canvas with a deep, wide branch tree?
+   Does anything here want a different index, a cache, a precomputed view —
+   this angle wasn't scrutinized at all in the first pass, only correctness
+   was.
+4. **Make sure the solution is actually complete — not half-baked.** Follow
+   every consequence through, including the ones that are inconvenient:
+   session_learnings, Observer cross-branch comparison, merge/prune, the
+   single-active-session tension. A design that solves node/edge visibility
+   but leaves threads hand-waved (as this draft does) is exactly the
+   half-baked outcome to avoid — either resolve every open question below or
+   have a real reason it's still open.
+5. **Whatever else future-me notices that current-me didn't.** This list
+   isn't exhaustive — it's what was visible from one conversation. Trust
+   whatever new problems surface once this is actually being worked with
+   real canvas data and real branch trees, not just described in prose.
+
 ## Relationship to `../branching/story.md`
 
 That story is the general vision: fork from **any node**, mid-canvas, owning a
