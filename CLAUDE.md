@@ -222,6 +222,7 @@ started** — `FRONTEND-CONTRACT.md` is its build-against contract.
 | Intervention Spectrum (judge, offers, `waiting`/`offer`/`withdraw` messages, phase latch) | `.ai/features/intervention-spectrum/` — status: draft |
 | Observer structure writes + per-edge accept/reject (`observer_structures`/`observer_edges` rows, `POST /api/observer-edge-status`) | Tables + Zod schema exist; no pipeline writes, no route |
 | Branching | `.ai/features/branching/story.md` — deferred |
+| Session branching (fork new sessions from a closed session) | `.ai/features/session-branching/story.md` — deferred |
 | `ignored` ghost status, velocity-adaptive debounce, phase transition (`updatePhase` uncalled), `carry_forward_ids` handling | Referenced in context docs; see `FRONTEND-CONTRACT.md` §10–11 |
 
 > **Note:** `.ai/features/sdk-delivery-filter/` is from a different project (Spring Boot / help-center-v2). Ignore it.
