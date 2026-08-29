@@ -172,12 +172,16 @@ arrive opportunistically on Plane 3 or not at all.
 
 ### 5.3 `POST /api/session/start`
 
-`{ "canvas_id": uuid }` → **`200 { "session_id": uuid }`**. New sessions start
-`status:'active'`, `current_phase:'diverging'`. If prior sessions exist, a
-session-boundary marker turn is appended to every agent thread — this is why
-the FE must never insert `sessions` rows directly. Only one active session per
-canvas is a **convention the FE must enforce** (complete the old one first);
-the backend does not reject a second active session.
+`{ "canvas_id": uuid }` → **`200 { "session_id": uuid, "session_number": number }`**.
+`session_number` is 1-indexed (`priorSessions.length + 1`) — render it directly
+as "Session N"; do not derive it client-side by fetching all sessions for the
+canvas and using array position, that duplicates work the backend already did
+for this exact purpose. New sessions start `status:'active'`,
+`current_phase:'diverging'`. If prior sessions exist, a session-boundary
+marker turn is appended to every agent thread — this is why the FE must never
+insert `sessions` rows directly. Only one active session per canvas is a
+**convention the FE must enforce** (complete the old one first); the backend
+does not reject a second active session.
 
 ### 5.4 `POST /api/session/complete`
 

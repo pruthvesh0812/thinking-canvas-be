@@ -475,6 +475,14 @@ export const sessionStartSchema = z.object({
 
 export type SessionStartPayload = z.infer<typeof sessionStartSchema>
 
+// Response of POST /api/session/start. session_number is 1-indexed —
+// priorSessions.length + 1 — so the frontend can render "Session N" without
+// deriving it client-side from a full sessions fetch.
+export type SessionStartResponse = {
+  session_id: string
+  session_number: number
+}
+
 // POST /api/session/complete
 export const sessionCompleteSchema = z.object({
   session_id: z.string().uuid(),

@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { SessionStartResponse } from '../../types/index.js'
 import { sessionStartSchema, sessionCompleteSchema } from '../../types/index.js'
 import { inngest } from '../lib/inngest.js'
 import { logger } from '../lib/logger.js'
@@ -41,12 +42,15 @@ sessionRoute.post('/session/start', async (c) => {
       )
     }
 
+    const session_number = priorSessions.length + 1
+
     logger.info('[route:session] started', {
       canvas_id,
       session_id: session.id,
       prior_sessions: priorSessions.length,
+      session_number,
     })
-    return c.json({ session_id: session.id })
+    return c.json<SessionStartResponse>({ session_id: session.id, session_number })
   } catch (err) {
     logger.error('[route:session] start failed', { canvas_id, error: (err as Error).message })
     return c.json({ error: 'internal error' }, 500)
