@@ -205,9 +205,11 @@ export type Database = {
           canvas_id: string
           created_at: string
           edge_type: string
+          from_handle: string | null
           from_node_id: string
           id: string
           session_id: string
+          to_handle: string | null
           to_node_id: string
         }
         Insert: {
@@ -215,9 +217,11 @@ export type Database = {
           canvas_id: string
           created_at?: string
           edge_type: string
+          from_handle?: string | null
           from_node_id: string
           id?: string
           session_id: string
+          to_handle?: string | null
           to_node_id: string
         }
         Update: {
@@ -225,9 +229,11 @@ export type Database = {
           canvas_id?: string
           created_at?: string
           edge_type?: string
+          from_handle?: string | null
           from_node_id?: string
           id?: string
           session_id?: string
+          to_handle?: string | null
           to_node_id?: string
         }
         Relationships: [

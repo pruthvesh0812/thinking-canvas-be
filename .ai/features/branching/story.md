@@ -11,6 +11,12 @@ depends_on: "intervention-spectrum"
 > and the blast radius so it isn't lost. It is a **major architectural change** and
 > needs its own planning/gatekeeper pass before any code. Not in the
 > intervention-spectrum scope.
+>
+> **See also:** [`../session-branching/story.md`](../session-branching/story.md) —
+> a narrower, concrete slice of this same idea, anchored at a **closed session**
+> instead of an arbitrary node. Its session-tree lineage model (flat
+> `session_number` + parent pointer) is meant to generalize into whatever this
+> story eventually becomes, not compete with it.
 
 ## What
 **Branching as a first-class capability.** A *branch* is an independent line of
