@@ -6,6 +6,7 @@ import { streamAgentOutput, publishDone } from '../streaming/tokens.js'
 import { streamOuterSubconscious } from '../agents/outer-subconscious.js'
 import { serialize } from '../serializer/index.js'
 import { getCanvas } from '../db/canvases.js'
+import { getNode } from '../db/nodes.js'
 import { getOrCreateThread, appendMessage, getById } from '../db/threads.js'
 import type { GhostPair } from '../../types/index.js'
 
@@ -68,6 +69,23 @@ export const outerSubPipeline = inngest.createFunction(
     // ── Step 3: Sleep so the frontend can animate the placeholder ghost ────
     // pair before real tokens start arriving.
     await step.sleep('ghost-animation', '1500ms')
+
+    // ── Step 3b: Record the trigger node as a canvas_event turn. serializeStateless ──
+    // (see serializer/index.ts) only ever renders the newest `canvas_event`
+    // turn on the thread — without one, Step 4 below returns '' and the
+    // agent gets nothing but the north star. Own step — appendMessage is a
+    // non-idempotent DB write and must never replay.
+    await step.run('record-canvas-event', async () => {
+      const node = await getNode(from_node_id)
+      const thread = await getOrCreateThread(canvas_id, 'outer_subconscious')
+      await appendMessage(thread.id, {
+        role: 'user',
+        turn_type: 'canvas_event',
+        node_id: from_node_id,
+        content: node.content ?? node.summary ?? '',
+        timestamp: new Date().toISOString(),
+      })
+    })
 
     // ── Step 4: Serialize a STATELESS context — just the canvas north star ──
     // plus the single trigger node, no thread history at all (see

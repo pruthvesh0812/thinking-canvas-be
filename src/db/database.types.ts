@@ -685,7 +685,33 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      allocate_session_seq: { Args: { p_session_id: string }; Returns: number }
+      append_node_to_sequence: {
+        Args: { p_node_id: string; p_session_id: string }
+        Returns: undefined
+      }
+      append_thread_message: {
+        Args: { p_message: Json; p_thread_id: string }
+        Returns: undefined
+      }
+      decrement_insight_turns: {
+        Args: { p_insight_id: string }
+        Returns: undefined
+      }
+      match_nodes: {
+        Args: {
+          canvas_id_filter: string
+          match_count: number
+          match_threshold: number
+          query_embedding: string
+        }
+        Returns: {
+          content: string
+          id: string
+          similarity: number
+          summary: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

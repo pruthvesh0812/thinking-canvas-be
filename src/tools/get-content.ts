@@ -7,7 +7,6 @@ export const get_content = createTool({
   id: 'get_content',
   description: 'Fetch the full content, summary, and direction marker of a single node by node_id.',
   inputSchema: z.object({
-    canvas_id: z.string().uuid(),
     node_id: z.string().uuid(),
   }),
   outputSchema: z.object({
@@ -18,8 +17,15 @@ export const get_content = createTool({
     session_id: z.string(),
     created_at: z.string(),
   }),
-  execute: async ({ context }) => {
-    const { canvas_id, node_id } = context
+  // canvas_id is server-injected via requestContext (see the agent's .stream()/
+  // .generate() call), never model-supplied — the model can't type a wrong UUID
+  // into a field it's never asked to fill in.
+  requestContextSchema: z.object({
+    canvas_id: z.string().uuid(),
+  }),
+  execute: async (inputData, { requestContext }) => {
+    const { node_id } = inputData
+    const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_content] called', { canvas_id, node_id })
 
     const { data, error } = await db

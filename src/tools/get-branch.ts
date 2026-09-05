@@ -7,7 +7,6 @@ export const get_branch = createTool({
   id: 'get_branch',
   description: 'Fetch all nodes reachable from a branch root following outgoing edges — gives Stress-Tester the full subtree to find weak assumptions.',
   inputSchema: z.object({
-    canvas_id: z.string().uuid(),
     branch_root_node_id: z.string().uuid(),
   }),
   outputSchema: z.object({
@@ -18,8 +17,13 @@ export const get_branch = createTool({
       direction_marker: z.string().nullable(),
     })),
   }),
-  execute: async ({ context }) => {
-    const { canvas_id, branch_root_node_id } = context
+  // canvas_id is server-injected via requestContext — see get_content.ts.
+  requestContextSchema: z.object({
+    canvas_id: z.string().uuid(),
+  }),
+  execute: async (inputData, { requestContext }) => {
+    const { branch_root_node_id } = inputData
+    const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_branch] called', { canvas_id, branch_root_node_id })
 
     const { data: edges, error: edgeErr } = await db

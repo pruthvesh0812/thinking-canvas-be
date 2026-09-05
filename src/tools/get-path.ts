@@ -7,7 +7,6 @@ export const get_path = createTool({
   id: 'get_path',
   description: 'Find the shortest path between two nodes via BFS over the edge graph — used by Articulator to understand what connects two ideas.',
   inputSchema: z.object({
-    canvas_id: z.string().uuid(),
     from_node_id: z.string().uuid(),
     to_node_id: z.string().uuid(),
   }),
@@ -19,8 +18,13 @@ export const get_path = createTool({
     })),
     length: z.number(),
   }),
-  execute: async ({ context }) => {
-    const { canvas_id, from_node_id, to_node_id } = context
+  // canvas_id is server-injected via requestContext — see get_content.ts.
+  requestContextSchema: z.object({
+    canvas_id: z.string().uuid(),
+  }),
+  execute: async (inputData, { requestContext }) => {
+    const { from_node_id, to_node_id } = inputData
+    const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_path] called', { canvas_id, from_node_id, to_node_id })
 
     const { data: edges, error } = await db

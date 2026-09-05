@@ -1,7 +1,7 @@
 import { classifyTiers, type Tier } from './tiers.js'
 import { SERIALIZATION_RULES, type TieredSerializationRule, type CanvasMapRule } from './rules.js'
 import { buildRejectionBlock, buildFullRejectionBlock } from './rejection.js'
-import { getNode, getAllByCanvas, getAllByCanvasWithContent, getRecentNodes } from '../db/nodes.js'
+import { getAllByCanvas, getAllByCanvasWithContent, getRecentNodes } from '../db/nodes.js'
 import { getEdgesByCanvas } from '../db/edges.js'
 import { getStructuresByCanvas, getEdgesByStructures } from '../db/observer-structures.js'
 import { logger } from '../lib/logger.js'
@@ -12,6 +12,7 @@ import type {
   ThreadMessage,
   Node,
   CanvasMapNode,
+  JudgeMapNode,
   Edge,
   GhostStatus,
   ObserverStructure,
@@ -34,6 +35,11 @@ type UserCanvasMsg = Extract<ThreadMessage, { role: 'user'; turn_type: 'canvas_e
 // its own handling.
 type GhostPairMsg = Extract<ThreadMessage, { role: 'assistant'; turn_type: 'ghost_pair' }>
 
+// What an edge line needs off a neighbouring node. `content` is optional so a
+// caller holding only the light CanvasMapNode projection still type-checks —
+// nodeText() just loses its raw-text fallback for that caller.
+type EdgeLineNode = Pick<Node, 'direction_marker' | 'summary'> & Partial<Pick<Node, 'content'>>
+
 // Returns msg narrowed to GhostPairMsg, or null if it's missing, a user turn,
 // or a non-ghost_pair assistant turn (e.g. a future observer_structure turn).
 function asGhostPairMsg(msg: ThreadMessage | undefined): GhostPairMsg | null {
@@ -45,7 +51,7 @@ function asGhostPairMsg(msg: ThreadMessage | undefined): GhostPairMsg | null {
 // Renders the immutable canvas north star as Tier 0 — always the first block in serialized output.
 function northStarBlock(canvas: Canvas): string {
   return [
-    `CANVAS NORTH STAR [${canvas.id.slice(0, 8)} | ANCHOR]`,
+    `CANVAS NORTH STAR [${canvas.id} | ANCHOR]`,
     `"${canvas.original_intent}"`,
   ].join('\n')
 }
@@ -61,33 +67,68 @@ function ghostSymbol(status: GhostStatus): string {
   }
 }
 
+// Renders a node reference for an edge line. seqMap only covers nodes that
+// triggered a turn in THIS agent's own thread, so a canvas node the agent has
+// never responded to has no seq — fall back to a short id rather than a bare
+// "?", which tells the agent nothing and cannot be passed to a tool.
+function nodeRef(nodeId: string, seqMap: ReadonlyMap<string, number>): string {
+  const seq = seqMap.get(nodeId)
+  return seq !== undefined ? `seq:${seq}` : `id:${nodeId.slice(0, 8)}`
+}
+
+// Best available text for a node in an edge line. Prefers the directional
+// summary, falls back to a trimmed slice of raw content, and only then admits
+// it has nothing. Enrichment can lag a node's creation (or fail outright), and
+// an empty "" in a trail line silently strips the agent's ability to see what
+// it is connected to.
+function nodeText(node: EdgeLineNode | undefined): string {
+  if (!node) return '(unknown node)'
+  if (node.summary) return node.summary
+  const raw = node.content?.trim()
+  if (raw) return raw.length > 100 ? `${raw.slice(0, 100)}…` : raw
+  return '(no summary yet)'
+}
+
 // Builds INCOMING + OUTGOING edge lines from a node's own pre-filtered edge
 // lists. nodeMap only needs to support .get() (ReadonlyMap) so callers can
 // pass either a Map<string, Node> or a Map<string, CanvasMapNode>.
+//
+// highlightEdgeId flags the specific edge that triggered this agent run (e.g.
+// the Articulator's newly-drawn edge) with a trailing ★NEW — without it, a
+// node with several edges gives the agent no way to tell which connection it
+// is actually meant to respond to.
 function formatEdgeLines(
   incoming: Edge[],
   outgoing: Edge[],
-  nodeMap: ReadonlyMap<string, Pick<Node, 'direction_marker' | 'summary'>>,
+  nodeMap: ReadonlyMap<string, EdgeLineNode>,
   seqMap: ReadonlyMap<string, number>,
+  highlightEdgeId?: string,
 ): string[] {
   const lines: string[] = []
 
   // Step 1 — Emit one INCOMING line per edge that points INTO this node.
   for (const e of incoming) {
     const src = nodeMap.get(e.from_node_id)
-    const srcSeq = seqMap.get(e.from_node_id) ?? '?'
-    const marker = src?.direction_marker ?? '?'
-    const summary = src?.summary ?? ''
-    lines.push(`INCOMING: [seq:${srcSeq} | ${marker}] ──${e.edge_type}──▶ "${summary}"`)
+    const flag = e.id === highlightEdgeId ? ' ★NEW' : ''
+    lines.push(
+      `INCOMING: [${nodeRef(e.from_node_id, seqMap)} | ${src?.direction_marker ?? '?'}]` +
+      ` ──${e.edge_type}──▶ "${nodeText(src)}"${flag}`
+    )
   }
 
-  // Step 2 — Emit one OUTGOING line per edge that leaves this node.
+  // Step 2 — Emit one OUTGOING line per edge that leaves this node. Carries the
+  // target's text too — an arrow to a bare seq number tells the agent a
+  // connection exists but nothing about what sits on the other end.
   if (outgoing.length === 0) {
     lines.push('OUTGOING: none yet')
   } else {
     for (const e of outgoing) {
-      const dstSeq = seqMap.get(e.to_node_id) ?? '?'
-      lines.push(`OUTGOING: ──${e.edge_type}──▶ seq:${dstSeq}`)
+      const dst = nodeMap.get(e.to_node_id)
+      const flag = e.id === highlightEdgeId ? ' ★NEW' : ''
+      lines.push(
+        `OUTGOING: ──${e.edge_type}──▶ [${nodeRef(e.to_node_id, seqMap)} | ${dst?.direction_marker ?? '?'}]` +
+        ` "${nodeText(dst)}"${flag}`
+      )
     }
   }
 
@@ -102,14 +143,16 @@ function formatEdgeLines(
 function edgeLines(
   nodeId: string,
   edges: Edge[],
-  nodeMap: ReadonlyMap<string, Pick<Node, 'direction_marker' | 'summary'>>,
+  nodeMap: ReadonlyMap<string, EdgeLineNode>,
   seqMap: ReadonlyMap<string, number>,
+  highlightEdgeId?: string,
 ): string[] {
   return formatEdgeLines(
     edges.filter(e => e.to_node_id === nodeId),
     edges.filter(e => e.from_node_id === nodeId),
     nodeMap,
     seqMap,
+    highlightEdgeId,
   )
 }
 
@@ -139,12 +182,13 @@ function formatTier1(
   msg: UserCanvasMsg,
   assistantMsg: GhostPairMsg | null,
   seq: number,
-  node: Node | undefined,
+  node: JudgeMapNode | undefined,
   edges: Edge[],
-  nodeMap: Map<string, Node>,
+  nodeMap: Map<string, JudgeMapNode>,
   seqMap: Map<string, number>,
   rule: TieredSerializationRule,
   pendingNodeCount: number,
+  triggerEdgeId?: string,
 ): string {
   const nodeId = 'node_id' in msg && msg.node_id ? msg.node_id : 'unknown'
   const marker = node?.direction_marker ?? ''
@@ -157,14 +201,21 @@ function formatTier1(
   ]
 
   // Step 2 — Content: full text, or summary if agent rule says summary-only (Observer).
+  // Multi-line content (e.g. the Articulator's endpoints + NEIGHBOURHOOD block)
+  // is rendered unquoted on its own lines — wrapping it in quotes would put the
+  // closing quote pages away from the opening one and blur where content ends.
   if (rule.activeNode === 'summary') {
     lines.push(`SUMMARY: "${node?.summary ?? msg.content}"`)
+  } else if (msg.content.includes('\n')) {
+    lines.push('CONTENT:', msg.content)
   } else {
     lines.push(`CONTENT: "${msg.content}"`)
   }
 
   // Step 3 — Edge connections: shows where this node connects in the graph.
-  lines.push(...edgeLines(nodeId, edges, nodeMap, seqMap))
+  // triggerEdgeId (Articulator only, today) flags which edge is the one the
+  // agent was actually invoked to respond to — see formatEdgeLines.
+  lines.push(...edgeLines(nodeId, edges, nodeMap, seqMap, triggerEdgeId))
 
   // Step 4 — Attunement data (Expander only — cognitive mode + question style).
   if (rule.includeAttunement) {
@@ -193,9 +244,9 @@ function formatTier2(
   msg: UserCanvasMsg,
   assistantMsg: GhostPairMsg | null,
   seq: number,
-  node: Node | undefined,
+  node: JudgeMapNode | undefined,
   edges: Edge[],
-  nodeMap: Map<string, Node>,
+  nodeMap: Map<string, JudgeMapNode>,
   seqMap: Map<string, number>,
   rule: TieredSerializationRule,
 ): string {
@@ -211,6 +262,10 @@ function formatTier2(
 
   // Step 2 — Content at depth dictated by agent rule.
   // full+contradictions (Stress-Tester) adds a warning flag on contradiction nodes.
+  // full+both-trails (Articulator, per SERIALIZATION.md) has no separate branch
+  // below — edgeLines() a few lines down always renders BOTH the INCOMING and
+  // OUTGOING trail regardless of rule, which is what "both trails" means, so it
+  // renders identically to plain 'full'. Not a missing case.
   if (rule.tier2 === 'summary') {
     lines.push(`SUMMARY: "${node?.summary ?? msg.content}"`)
   } else {
@@ -242,9 +297,9 @@ function formatTier3(
   msg: UserCanvasMsg,
   assistantMsg: GhostPairMsg | null,
   seq: number,
-  node: Node | undefined,
+  node: JudgeMapNode | undefined,
   edges: Edge[],
-  nodeMap: Map<string, Node>,
+  nodeMap: Map<string, JudgeMapNode>,
   seqMap: Map<string, number>,
   rule: TieredSerializationRule,
 ): string {
@@ -289,7 +344,7 @@ type Tier4Item = {
   msg: UserCanvasMsg
   assistantMsg: GhostPairMsg | null
   seq: number
-  node: Node | undefined
+  node: JudgeMapNode | undefined
   edges: Edge[]
   seqMap: Map<string, number>
 }
@@ -512,9 +567,9 @@ export async function serializeJudgeContext(
 // shared by serializeStateless and serializeTiered so both derive it the same way.
 function resolveMsgContext(
   msg: UserCanvasMsg,
-  nodeMap: Map<string, Node>,
+  nodeMap: Map<string, JudgeMapNode>,
   seqMap: Map<string, number>,
-): { seq: number; node: Node | undefined } {
+): { seq: number; node: JudgeMapNode | undefined } {
   const nodeId = 'node_id' in msg ? msg.node_id : undefined
   const seq = nodeId ? (seqMap.get(nodeId) ?? 0) : 0
   const node = nodeId ? nodeMap.get(nodeId) : undefined
@@ -527,7 +582,7 @@ function resolveMsgContext(
 function serializeStateless(
   thread: AgentThread,
   rule: TieredSerializationRule,
-  nodeMap: Map<string, Node>,
+  nodeMap: Map<string, JudgeMapNode>,
   seqMap: Map<string, number>,
   edges: Edge[],
 ): string {
@@ -551,10 +606,11 @@ function serializeStateless(
 function serializeTiered(
   thread: AgentThread,
   rule: TieredSerializationRule,
-  nodeMap: Map<string, Node>,
+  nodeMap: Map<string, JudgeMapNode>,
   seqMap: Map<string, number>,
   edges: Edge[],
   tierMap: Map<string, Tier>,
+  triggerEdgeId?: string,
 ): string[] {
   const tier1Blocks: string[] = []
   const tier2Blocks: string[] = []
@@ -588,7 +644,7 @@ function serializeTiered(
             if (later.role === 'user' && later.turn_type === 'canvas_event') pendingCount++
           }
         }
-        tier1Blocks.push(formatTier1(msg as UserCanvasMsg, assistantMsg, seq, node, edges, nodeMap, seqMap, rule, pendingCount))
+        tier1Blocks.push(formatTier1(msg as UserCanvasMsg, assistantMsg, seq, node, edges, nodeMap, seqMap, rule, pendingCount, triggerEdgeId))
         break
       }
       case 2:
@@ -622,11 +678,12 @@ function serializeTiered(
 // Called by all pipeline functions before agent invocation.
 // Converts the agent's canvas-scoped thread into structured text for the LLM context window.
 // options.triggerNodeId is only used by canvas-map agents (Observer) — see serializeCanvasMap.
+// options.triggerEdgeId is only used by the tiered path (Articulator today) — see formatEdgeLines.
 export async function serialize(
   thread: AgentThread,
   agentRole: AgentRole,
   canvas: Canvas,
-  options?: { triggerNodeId?: string },
+  options?: { triggerNodeId?: string; triggerEdgeId?: string },
 ): Promise<string> {
   const rule = SERIALIZATION_RULES[agentRole]
   logger.info('[serializer:index] start', { canvas_id: canvas.id, agent_role: agentRole, message_count: thread.messages.length, thread_type: rule.threadType })
@@ -638,28 +695,25 @@ export async function serialize(
     return serializeCanvasMap(canvas, agentRole, rule, options?.triggerNodeId)
   }
 
-  // Step 1 — Collect all node IDs referenced across the thread so they can be batch-fetched.
-  const nodeIds = thread.messages
-    .filter((m): m is Extract<ThreadMessage, { role: 'user'; turn_type: 'canvas_event' | 'session_boundary' }> =>
-      m.role === 'user' && m.turn_type === 'canvas_event'
-    )
-    .map(m => ('node_id' in m ? m.node_id : undefined))
-    .filter((id): id is string => Boolean(id))
-
-  // Step 2 — Fetch node metadata, canvas edges, and the rejection block in parallel.
-  // Nodes are fetched individually (no batch endpoint) but all fired at once via Promise.all.
-  const [nodeResults, edges, rejectionBlock] = await Promise.all([
-    Promise.all(nodeIds.map(id => getNode(id).catch(() => null))),
+  // Step 1 — Fetch every node on the canvas + canvas edges + the rejection block
+  // in parallel. nodeMap is seeded canvas-wide (not just nodes this agent's own
+  // thread happened to reference) so an edge endpoint the agent never directly
+  // triggered still renders with its real summary/direction_marker instead of
+  // an empty "" and "?" — the tier formatters only ever read those two fields
+  // off a node (they render msg.content, not node.content, for the active/full
+  // text), so the lighter canvas-map projection is enough.
+  const [allNodes, edges, rejectionBlock] = await Promise.all([
+    getAllByCanvasWithContent(canvas.id),
     getEdgesByCanvas(canvas.id),
     rule.includeRejectionInsights ? buildRejectionBlock(canvas.id, agentRole) : Promise.resolve(''),
   ])
 
-  // Step 3 — Build lookup maps used by every formatter.
-  // nodeMap: node_id → Node  |  seqMap: node_id → 1-based position in thread
-  const nodeMap = new Map<string, Node>()
-  for (const n of nodeResults) {
-    if (n) nodeMap.set(n.id, n)
-  }
+  // Step 2 — Build lookup maps used by every formatter.
+  // nodeMap: node_id → JudgeMapNode (summary + marker + content), canvas-wide.
+  // seqMap: node_id → 1-based position in THIS agent's own thread — a node that
+  // never triggered a turn for this agent legitimately has no such position and
+  // renders seq:? in edge lines; that's expected, not a bug.
+  const nodeMap = new Map<string, JudgeMapNode>(allNodes.map(n => [n.id, n]))
 
   const seqMap = new Map<string, number>()
   let seqCounter = 0
@@ -674,10 +728,10 @@ export async function serialize(
 
   const parts: string[] = []
 
-  // Step 4 — North Star (Tier 0) — always first, always present.
+  // Step 3 — North Star (Tier 0) — always first, always present.
   parts.push(northStarBlock(canvas))
 
-  // Step 5 — Most recent session boundary marker, if any.
+  // Step 4 — Most recent session boundary marker, if any.
   // Placed directly after the north star so the agent sees the current session context.
   const sessionBoundaries = thread.messages.filter(
     (m): m is Extract<ThreadMessage, { role: 'user'; turn_type: 'canvas_event' | 'session_boundary' }> =>
@@ -687,20 +741,20 @@ export async function serialize(
     parts.push(sessionBoundaries[sessionBoundaries.length - 1].content)
   }
 
-  // Step 6 — NEGATIVE CONSTRAINTS block (Expander, Stress-Tester, Observer only).
+  // Step 5 — NEGATIVE CONSTRAINTS block (Expander, Stress-Tester, Observer only).
   if (rejectionBlock) parts.push(rejectionBlock)
 
-  // Step 7 — Stateless agents (Outer Sub) stop here — see serializeStateless.
+  // Step 6 — Stateless agents (Outer Sub) stop here — see serializeStateless.
   if (rule.threadType === 'stateless') {
     const activeBlock = serializeStateless(thread, rule, nodeMap, seqMap, edges)
     if (activeBlock) parts.push(activeBlock)
     return parts.join('\n\n')
   }
 
-  // Step 8 — Canvas-stateful agents: classify into tiers and format every
+  // Step 7 — Canvas-stateful agents: classify into tiers and format every
   // bucket — see serializeTiered.
   const tierMap = classifyTiers(thread.messages)
-  parts.push(...serializeTiered(thread, rule, nodeMap, seqMap, edges, tierMap))
+  parts.push(...serializeTiered(thread, rule, nodeMap, seqMap, edges, tierMap, options?.triggerEdgeId))
 
   logger.info('[serializer:index] done', { canvas_id: canvas.id, agent_role: agentRole, parts: parts.length })
   return parts.join('\n\n')

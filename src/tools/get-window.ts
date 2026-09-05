@@ -7,7 +7,6 @@ export const get_window = createTool({
   id: 'get_window',
   description: 'Fetch the N most recent nodes on a canvas across all sessions — sliding context window.',
   inputSchema: z.object({
-    canvas_id: z.string().uuid(),
     limit: z.number().int().min(1).max(50).default(10),
   }),
   outputSchema: z.object({
@@ -20,8 +19,13 @@ export const get_window = createTool({
       created_at: z.string(),
     })),
   }),
-  execute: async ({ context }) => {
-    const { canvas_id, limit } = context
+  // canvas_id is server-injected via requestContext — see get_content.ts.
+  requestContextSchema: z.object({
+    canvas_id: z.string().uuid(),
+  }),
+  execute: async (inputData, { requestContext }) => {
+    const { limit } = inputData
+    const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_window] called', { canvas_id, limit })
 
     const { data, error } = await db

@@ -5,7 +5,9 @@ import { buildSpawnDescriptor, publishSpawn } from '../streaming/spawn.js'
 import { streamAgentOutput, publishDone } from '../streaming/tokens.js'
 import { streamArticulator } from '../agents/articulator.js'
 import { serialize } from '../serializer/index.js'
+import { buildNeighborhoodBlock } from '../serializer/neighborhood.js'
 import { getCanvas } from '../db/canvases.js'
+import { getNode } from '../db/nodes.js'
 import { getOrCreateThread, appendMessage, getById } from '../db/threads.js'
 import type { GhostPair } from '../../types/index.js'
 
@@ -27,7 +29,7 @@ export const articulatorPipeline = inngest.createFunction(
     triggers: [{ event: 'canvas/edge.existing-nodes' }],
   },
   async ({ event, step }) => {
-    const { canvas_id, session_id, edge_id, from_node_id } = event.data
+    const { canvas_id, session_id, edge_id, from_node_id, to_node_id } = event.data
     const startedAt = Date.now()
     logger.info('[pipeline:articulator] start', { canvas_id, session_id, edge_id })
 
@@ -67,12 +69,48 @@ export const articulatorPipeline = inngest.createFunction(
     // before real tokens start arriving.
     await step.sleep('ghost-animation', '1500ms')
 
+    // ── Step 3b: Record this edge as a canvas_event turn — the "user" half ──
+    // of the (canvas_event → ghost_pair) pair the tiered serializer expects
+    // (see SERIALIZATION.md → Node-Anchored Format). Without this, Tier 1 in
+    // serializeTiered/formatTier1 has nothing to render: it only ever formats
+    // `canvas_event` turns, so the Articulator would see nothing about the
+    // two nodes it's meant to articulate. node_id anchors on from_node_id
+    // (matches ghost_pair.triggered_by_node_id below); content carries both
+    // endpoints so the active-node block is self-contained even before the
+    // agent calls get_content/get_path/traverse_trail to drill further.
+    // Own step — appendMessage is a non-idempotent DB write and must never replay.
+    await step.run('record-canvas-event', async () => {
+      const [fromNode, toNode, neighborhood] = await Promise.all([
+        getNode(from_node_id),
+        getNode(to_node_id),
+        // Canvas nodes are usually fragments — "what is the other option" is
+        // unreadable without the sibling that named the FIRST option. Inline
+        // the surrounding subgraph rather than relying on the agent to crawl
+        // outward with tools, which it does not reliably do.
+        buildNeighborhoodBlock({ canvas_id, from_node_id, to_node_id }),
+      ])
+      const thread = await getOrCreateThread(canvas_id, 'articulator')
+      const content = [
+        'Edge drawn connecting two existing nodes.',
+        `FROM [${from_node_id}]: "${fromNode.content ?? fromNode.summary ?? ''}"`,
+        `TO [${to_node_id}]: "${toNode.content ?? toNode.summary ?? ''}"`,
+        ...(neighborhood ? ['', neighborhood] : []),
+      ].join('\n')
+      await appendMessage(thread.id, {
+        role: 'user',
+        turn_type: 'canvas_event',
+        node_id: from_node_id,
+        content,
+        timestamp: new Date().toISOString(),
+      })
+    })
+
     // ── Step 4: Serialize the Articulator's thread (canvas-stateful — full ──
     // recency-tiered thread + canvas), the same as the main pipeline.
     const context = await step.run('serialize', async () => {
       const thread = await getOrCreateThread(canvas_id, 'articulator')
       const canvas = await getCanvas(canvas_id)
-      return serialize(thread, 'articulator', canvas)
+      return serialize(thread, 'articulator', canvas, { triggerEdgeId: edge_id })
     })
     logger.info('[pipeline:articulator] step:serialize complete', {
       canvas_id,

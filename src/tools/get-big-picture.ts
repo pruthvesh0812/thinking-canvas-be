@@ -6,7 +6,9 @@ import { logger } from '../lib/logger.js'
 export const get_big_picture = createTool({
   id: 'get_big_picture',
   description: 'Fetch all node summaries and the full edge map for a canvas — bird\'s eye view for the Observer.',
-  inputSchema: z.object({
+  inputSchema: z.object({}),
+  // canvas_id is server-injected via requestContext — see get_content.ts.
+  requestContextSchema: z.object({
     canvas_id: z.string().uuid(),
   }),
   outputSchema: z.object({
@@ -21,8 +23,8 @@ export const get_big_picture = createTool({
       edge_type: z.string(),
     })),
   }),
-  execute: async ({ context }) => {
-    const { canvas_id } = context
+  execute: async (_inputData, { requestContext }) => {
+    const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_big_picture] called', { canvas_id })
 
     const [nodesResult, edgesResult] = await Promise.all([

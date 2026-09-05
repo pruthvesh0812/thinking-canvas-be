@@ -36,10 +36,19 @@ const directionalSummarySchema = z.object({
 async function enrichNode(node_id: string): Promise<void> {
   const node = await getNode(node_id)
 
-  // The embedding only needs the summary as a fallback for empty content, so
-  // it doesn't have to wait on the summary call in the common (non-empty)
-  // case — run both concurrently and only chain them when there's no content.
-  const summaryPromise = generateObject({
+  // The summary is the LOAD-BEARING half of enrichment: every agent's
+  // serialized context renders nodes by summary + direction_marker, so a node
+  // without one shows up blank in every edge line on the canvas. The embedding
+  // only powers semantic_promote.
+  //
+  // These two are therefore deliberately NOT bundled into one Promise.all.
+  // They were, and when the embedding model was retired upstream (404), the
+  // rejection took the summary write down with it and failed the whole
+  // request — leaving every node on every canvas with a null summary. The
+  // summary is now committed on its own, and an embedding failure is logged
+  // and swallowed so it can degrade semantic search without ever again
+  // blinding the agents.
+  const { object } = await generateObject({
     model: models.fast(),
     schema: directionalSummarySchema,
     system: DIRECTIONAL_SUMMARY_PROMPT,
@@ -47,19 +56,18 @@ async function enrichNode(node_id: string): Promise<void> {
     providerOptions: { google: models.thinking('low') },
   })
 
-  let object: Awaited<typeof summaryPromise>['object']
-  let embedding: number[]
-  if (node.content) {
-    ;[{ object }, embedding] = await Promise.all([summaryPromise, generateEmbedding(node.content)])
-  } else {
-    ;({ object } = await summaryPromise)
-    embedding = await generateEmbedding(object.summary)
-  }
+  await updateSummary(node_id, object.summary, object.direction_marker)
 
-  await Promise.all([
-    updateSummary(node_id, object.summary, object.direction_marker),
-    updateEmbedding(node_id, embedding),
-  ])
+  try {
+    // Embed the node's own text; fall back to the summary for an empty node.
+    const embedding = await generateEmbedding(node.content || object.summary)
+    await updateEmbedding(node_id, embedding)
+  } catch (err) {
+    logger.error('[route:canvas-event] embedding failed — summary kept', {
+      node_id,
+      error: (err as Error).message,
+    })
+  }
 }
 
 export const canvasEventRoute = new Hono()
@@ -185,7 +193,13 @@ canvasEventRoute.post('/canvas-event', async (c) => {
     if (edge.both_existing && edge.edge_type !== 'question') {
       await inngest.send({
         name: 'canvas/edge.existing-nodes',
-        data: { canvas_id, session_id, edge_id: edge.id, from_node_id: edge.from_node_id },
+        data: {
+          canvas_id,
+          session_id,
+          edge_id: edge.id,
+          from_node_id: edge.from_node_id,
+          to_node_id: edge.to_node_id,
+        },
       })
       logger.info('[route:canvas-event] edge.existing-nodes fired', { canvas_id, session_id, edge_id: edge.id })
     } else if (edge.edge_type === 'question') {

@@ -7,7 +7,6 @@ export const traverse_trail = createTool({
   id: 'traverse_trail',
   description: 'Walk the edge trail forward or backward from a node, returning the ordered sequence of connected nodes.',
   inputSchema: z.object({
-    canvas_id: z.string().uuid(),
     start_node_id: z.string().uuid(),
     direction: z.enum(['forward', 'backward']),
     max_hops: z.number().int().min(1).max(20).default(10),
@@ -20,8 +19,13 @@ export const traverse_trail = createTool({
       edge_type: z.string(),
     })),
   }),
-  execute: async ({ context }) => {
-    const { canvas_id, start_node_id, direction, max_hops } = context
+  // canvas_id is server-injected via requestContext — see get_content.ts.
+  requestContextSchema: z.object({
+    canvas_id: z.string().uuid(),
+  }),
+  execute: async (inputData, { requestContext }) => {
+    const { start_node_id, direction, max_hops } = inputData
+    const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:traverse_trail] called', { canvas_id, start_node_id, direction, max_hops })
 
     const trail: { node_id: string; summary: string | null; direction_marker: string | null; edge_type: string }[] = []

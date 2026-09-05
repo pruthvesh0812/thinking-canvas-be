@@ -8,7 +8,6 @@ export const semantic_promote = createTool({
   id: 'semantic_promote',
   description: 'Find canvas nodes semantically similar to a query using pgvector cosine search — promotes Tier 3/4 nodes into full context without bloating the thread.',
   inputSchema: z.object({
-    canvas_id: z.string().uuid(),
     query_text: z.string().min(1),
     exclude_node_ids: z.array(z.string().uuid()).default([]),
     limit: z.number().int().min(1).max(10).default(5),
@@ -20,8 +19,13 @@ export const semantic_promote = createTool({
       similarity: z.number(),
     })),
   }),
-  execute: async ({ context }) => {
-    const { canvas_id, query_text, exclude_node_ids, limit } = context
+  // canvas_id is server-injected via requestContext — see get_content.ts.
+  requestContextSchema: z.object({
+    canvas_id: z.string().uuid(),
+  }),
+  execute: async (inputData, { requestContext }) => {
+    const { query_text, exclude_node_ids, limit } = inputData
+    const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:semantic_promote] called', {
       canvas_id,
       query_preview: query_text.slice(0, 60),

@@ -26,7 +26,7 @@ const app = new Hono()
 
 // CORS is restricted to the frontend origin only — never wildcard (the API is
 // single-tenant and the SSE stream must not be readable cross-origin).
-const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:3000'
+const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:9000'
 app.use('/*', cors({ origin: FRONTEND_URL }))
 
 app.get('/health', (c) => c.json({ status: 'ok' }))

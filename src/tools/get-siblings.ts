@@ -7,7 +7,6 @@ export const get_siblings = createTool({
   id: 'get_siblings',
   description: 'Fetch sibling nodes that share the same parent as the given node — nodes the Observer uses to detect divergence.',
   inputSchema: z.object({
-    canvas_id: z.string().uuid(),
     node_id: z.string().uuid(),
   }),
   outputSchema: z.object({
@@ -17,8 +16,13 @@ export const get_siblings = createTool({
       direction_marker: z.string().nullable(),
     })),
   }),
-  execute: async ({ context }) => {
-    const { canvas_id, node_id } = context
+  // canvas_id is server-injected via requestContext — see get_content.ts.
+  requestContextSchema: z.object({
+    canvas_id: z.string().uuid(),
+  }),
+  execute: async (inputData, { requestContext }) => {
+    const { node_id } = inputData
+    const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_siblings] called', { canvas_id, node_id })
 
     const { data: parentEdges, error: parentErr } = await db
