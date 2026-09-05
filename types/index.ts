@@ -19,7 +19,13 @@ export type ContextNodeType =
   | 'contradiction'
   | 'appreciation'
 
-export type EdgeType = 'logical' | 'doubt' | 'question' | 'associative'
+// 'relate' is the DELIBERATE "articulate this connection" gesture — the only
+// edge type that triggers the Articulator immediately. 'logical' (and doubt /
+// associative) are silent structural edges: drawing one just rearranges the
+// canvas, absorbed into the next debounced pass, so the user isn't ambushed by
+// a ghost every time they tidy up their thinking. 'question' still fires the
+// Outer Subconscious.
+export type EdgeType = 'logical' | 'doubt' | 'question' | 'associative' | 'relate'
 
 // Which side of a node the edge attaches to. Frontend-owned (React Flow
 // handle id); backend never reads it. Enforced by CHECK constraint on the
@@ -275,6 +281,16 @@ export type RejectionInsight = {
 export type SpawnDescriptor = {
   trigger_node_id: string
   session_id: string
+
+  // Set for edge-triggered spawns (Articulator via a `relate` edge); undefined
+  // for node-triggered spawns (Expander / Stress-Tester / Outer Subconscious).
+  trigger_edge_id?: string
+
+  // The canvas nodes the ghost pair visually anchors to — the frontend drives
+  // its halos off this single field. ALWAYS populated: [trigger_node_id] for a
+  // node-triggered spawn, [from_node_id, to_node_id] (source first) for a
+  // relate-triggered Articulator run.
+  anchor_node_ids: string[]
 
   context_node: {
     ghost_id: string

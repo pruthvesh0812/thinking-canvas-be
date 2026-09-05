@@ -13,11 +13,12 @@ import type { GhostPair } from '../../types/index.js'
 
 // ─────────────────────────────────────────────────────────────────────────
 // ARTICULATOR PIPELINE — immediate (no debounce), fires the instant the user
-// draws an edge directly between two nodes that BOTH already exist on the
-// canvas (both_existing=true) and the edge is NOT a question edge. This is
-// the "connect two existing thoughts" gesture, so there is nothing to route:
-// Attunement and the Orchestrator are skipped entirely and the Articulator
-// runs straight away.
+// draws a `relate` edge between two nodes that BOTH already exist on the canvas
+// (both_existing=true). `relate` is the DELIBERATE "articulate this connection"
+// gesture — a plain logical/doubt/associative edge between existing nodes no
+// longer triggers anything, so rearranging the canvas is silent (see the edge
+// routing in src/routes/canvas-event.ts). There is nothing to route here:
+// Attunement and the judge are skipped and the Articulator runs straight away.
 //
 // Flow: guard → build+publish a context-only ghost (no question node) →
 // short animation sleep → serialize the Articulator's thread → stream its
@@ -55,6 +56,11 @@ export const articulatorPipeline = inngest.createFunction(
         agent_role: 'articulator',
         context_node_type: 'reframe',
         has_question_node: false,
+        // Edge-triggered (a `relate` edge): carry the edge id, and anchor the
+        // ghost to BOTH connected nodes (source first) so the FE haloes the
+        // pair, not a single node.
+        trigger_edge_id: edge_id,
+        anchor_node_ids: [from_node_id, to_node_id],
       })
       await publishSpawn(session_id, d)
       return d
