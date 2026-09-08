@@ -32,6 +32,7 @@ export const get_big_picture = createTool({
         .from('nodes')
         .select('id, summary, direction_marker')
         .eq('canvas_id', canvas_id)
+        .is('set_aside_at', null)
         .order('created_at', { ascending: true }),
       db
         .from('edges')
@@ -49,10 +50,18 @@ export const get_big_picture = createTool({
       throw new Error(`get_big_picture edges failed: ${edgesResult.error.message}`)
     }
 
+    // A set-aside node contributes nothing to the bird's-eye map, edges
+    // touching it included (see CORE-CONCEPTS.md → set aside) — drop any
+    // edge whose endpoint fell out of the active-node fetch above.
+    const activeIds = new Set((nodesResult.data ?? []).map(n => n.id))
+    const activeEdges = (edgesResult.data ?? []).filter(
+      e => activeIds.has(e.from_node_id) && activeIds.has(e.to_node_id)
+    )
+
     logger.info('[tool:get_big_picture] ok', {
       canvas_id,
       node_count: nodesResult.data?.length ?? 0,
-      edge_count: edgesResult.data?.length ?? 0,
+      edge_count: activeEdges.length,
     })
 
     return {
@@ -61,7 +70,7 @@ export const get_big_picture = createTool({
         summary: n.summary,
         direction_marker: n.direction_marker,
       })),
-      edges: (edgesResult.data ?? []).map(e => ({
+      edges: activeEdges.map(e => ({
         from: e.from_node_id,
         to: e.to_node_id,
         edge_type: e.edge_type,

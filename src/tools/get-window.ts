@@ -32,6 +32,7 @@ export const get_window = createTool({
       .from('nodes')
       .select('id, content, summary, direction_marker, session_id, created_at')
       .eq('canvas_id', canvas_id)
+      .is('set_aside_at', null)
       .order('created_at', { ascending: false })
       .limit(limit)
 

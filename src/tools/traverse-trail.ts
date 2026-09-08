@@ -51,20 +51,30 @@ export const traverse_trail = createTool({
       }
       if (!edges || edges.length === 0) break
 
-      const edge = edges[0]
-      const next_id = direction === 'forward' ? edge.to_node_id : edge.from_node_id
-
-      const { data: node, error: nodeErr } = await db
+      // Batch-check every candidate hop's node in one query, filtered to
+      // active-only — a set-aside node must not be walked into (see
+      // CORE-CONCEPTS.md → set aside), same as it isn't on the canvas at
+      // all. Pick the first candidate edge whose target survives the filter.
+      const candidateIds = edges.map(e => direction === 'forward' ? e.to_node_id : e.from_node_id)
+      const { data: activeNodes, error: nodeErr } = await db
         .from('nodes')
         .select('id, summary, direction_marker')
-        .eq('id', next_id)
         .eq('canvas_id', canvas_id)
-        .single()
+        .in('id', candidateIds)
+        .is('set_aside_at', null)
 
       if (nodeErr) {
-        logger.error('[tool:traverse_trail] node query error', { canvas_id, next_id, hop, error: nodeErr.message })
+        logger.error('[tool:traverse_trail] node query error', { canvas_id, candidateIds, hop, error: nodeErr.message })
         throw new Error(`traverse_trail node query failed: ${nodeErr.message}`)
       }
+      if (!activeNodes || activeNodes.length === 0) break
+
+      const activeById = new Map(activeNodes.map(n => [n.id, n]))
+      const edge = edges.find(e => activeById.has(direction === 'forward' ? e.to_node_id : e.from_node_id))
+      if (!edge) break
+
+      const next_id = direction === 'forward' ? edge.to_node_id : edge.from_node_id
+      const node = activeById.get(next_id)!
 
       trail.push({
         node_id: node.id,

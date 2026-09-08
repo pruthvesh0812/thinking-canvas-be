@@ -108,6 +108,12 @@ export type Node = {
   width: number | null
   height: number | null
   created_at: string
+  // Soft-archive — NULL = active (default), non-NULL = set aside at that
+  // instant. A set-aside node is preserved, never destroyed, but every
+  // reasoning read filters it (and any edge touching it) out live — see
+  // CORE-CONCEPTS.md → set aside. Only owner='ai' nodes are ever set aside;
+  // frontend-written directly (same class as content/position edits).
+  set_aside_at: string | null
 }
 
 // The Observer's canvas map only ever reads these fields off a node (never
@@ -434,6 +440,11 @@ export const canvasEventSchema = z
       'edge.created',
       'edge.deleted',
       'ghost.accepted',
+      // Set-aside (soft-archive) — frontend writes set_aside_at directly to
+      // Supabase, then notifies via one of these two, IDs only. See
+      // CORE-CONCEPTS.md → set aside.
+      'node.set_aside',
+      'node.restored',
     ]),
   })
   .refine(
@@ -446,7 +457,9 @@ export const canvasEventSchema = z
       const isNodeEvent =
         d.event_type === 'node.created' ||
         d.event_type === 'node.updated' ||
-        d.event_type === 'node.deleted'
+        d.event_type === 'node.deleted' ||
+        d.event_type === 'node.set_aside' ||
+        d.event_type === 'node.restored'
       return isNodeEvent ? !!d.node_id : !!d.edge_id
     },
     {

@@ -33,6 +33,7 @@ export const get_content = createTool({
       .select('id, content, summary, direction_marker, session_id, created_at')
       .eq('id', node_id)
       .eq('canvas_id', canvas_id)
+      .is('set_aside_at', null)
       .single()
 
     if (error) {

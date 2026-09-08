@@ -187,6 +187,39 @@ canvasEventRoute.post('/canvas-event', async (c) => {
       return c.json({ ok: true })
     }
 
+    if (event_type === 'node.set_aside') {
+      const node_id = parsed.data.node_id!
+      // The FE already wrote set_aside_at directly to Supabase (§3) — the
+      // fingerprint trigger fires on any nodes UPDATE, so canvas_version is
+      // already bumped. Every reasoning read filters set-aside nodes live
+      // (db/nodes.ts, db/edges.ts, cursor tools, match_nodes — see
+      // CORE-CONCEPTS.md → set aside), so the next agent run is automatically
+      // correct with no further action needed here.
+      //
+      // The one thing that ISN'T automatically correct: an offer already
+      // generated/waiting/shown for THIS session may be anchored to the node
+      // that just vanished from reasoning. Reuse the impact pipeline (same
+      // one node.deleted fires) to warn it in place — a set-aside node is,
+      // from the intervention system's perspective, indistinguishable from a
+      // deleted one.
+      await inngest.send({
+        name: 'canvas/intervention.impact',
+        data: { canvas_id, session_id, deleted_node_id: node_id },
+      })
+      logger.info('[route:canvas-event] node.set_aside — impact event fired', { canvas_id, session_id, node_id })
+      return c.json({ ok: true })
+    }
+
+    if (event_type === 'node.restored') {
+      // Symmetric inverse of node.set_aside — the FE already cleared
+      // set_aside_at, so the node is back in reasoning on the next agent run
+      // via the same live filters. A restore only adds information back, it
+      // never invalidates an in-flight offer, so there is nothing to warn.
+      const node_id = parsed.data.node_id!
+      logger.info('[route:canvas-event] node.restored', { canvas_id, session_id, node_id })
+      return c.json({ ok: true })
+    }
+
     // event_type === 'edge.created'
     // Edge routing turns on edge_type, NOT merely on "both ends exist":
     //   question              → Outer Subconscious (immediate), as before.

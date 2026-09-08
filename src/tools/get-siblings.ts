@@ -40,7 +40,24 @@ export const get_siblings = createTool({
       return { siblings: [] }
     }
 
-    const parent_ids = parentEdges.map(e => e.from_node_id)
+    // A set-aside parent's edge into node_id is excluded (see
+    // CORE-CONCEPTS.md → set aside) — don't derive siblings through it.
+    const { data: activeParents, error: activeParentErr } = await db
+      .from('nodes')
+      .select('id')
+      .eq('canvas_id', canvas_id)
+      .in('id', parentEdges.map(e => e.from_node_id))
+      .is('set_aside_at', null)
+
+    if (activeParentErr) {
+      logger.error('[tool:get_siblings] active parent lookup error', { canvas_id, node_id, error: activeParentErr.message })
+      throw new Error(`get_siblings active parent lookup failed: ${activeParentErr.message}`)
+    }
+    const parent_ids = (activeParents ?? []).map(n => n.id)
+    if (parent_ids.length === 0) {
+      logger.info('[tool:get_siblings] no active parent found, returning empty', { canvas_id, node_id })
+      return { siblings: [] }
+    }
 
     const { data: siblingEdges, error: siblingErr } = await db
       .from('edges')
@@ -65,6 +82,7 @@ export const get_siblings = createTool({
       .select('id, summary, direction_marker')
       .eq('canvas_id', canvas_id)
       .in('id', sibling_ids)
+      .is('set_aside_at', null)
 
     if (nodesErr) {
       logger.error('[tool:get_siblings] node fetch error', { canvas_id, node_id, error: nodesErr.message })

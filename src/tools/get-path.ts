@@ -27,18 +27,29 @@ export const get_path = createTool({
     const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_path] called', { canvas_id, from_node_id, to_node_id })
 
-    const { data: edges, error } = await db
-      .from('edges')
-      .select('from_node_id, to_node_id, edge_type')
-      .eq('canvas_id', canvas_id)
+    const [activeNodesResult, edgesResult] = await Promise.all([
+      db.from('nodes').select('id').eq('canvas_id', canvas_id).is('set_aside_at', null),
+      db.from('edges').select('from_node_id, to_node_id, edge_type').eq('canvas_id', canvas_id),
+    ])
 
-    if (error) {
-      logger.error('[tool:get_path] edge load error', { canvas_id, error: error.message })
-      throw new Error(`get_path edge load failed: ${error.message}`)
+    if (activeNodesResult.error) {
+      logger.error('[tool:get_path] node load error', { canvas_id, error: activeNodesResult.error.message })
+      throw new Error(`get_path node load failed: ${activeNodesResult.error.message}`)
+    }
+    if (edgesResult.error) {
+      logger.error('[tool:get_path] edge load error', { canvas_id, error: edgesResult.error.message })
+      throw new Error(`get_path edge load failed: ${edgesResult.error.message}`)
     }
 
+    // A set-aside node must not be a stepping stone in the path — drop any
+    // edge touching one before building adjacency (see CORE-CONCEPTS.md → set aside).
+    const activeIds = new Set((activeNodesResult.data ?? []).map(n => n.id))
+    const edges = (edgesResult.data ?? []).filter(
+      e => activeIds.has(e.from_node_id) && activeIds.has(e.to_node_id)
+    )
+
     const adjacency = new Map<string, { to: string; edge_type: string }[]>()
-    for (const e of edges ?? []) {
+    for (const e of edges) {
       if (!adjacency.has(e.from_node_id)) adjacency.set(e.from_node_id, [])
       adjacency.get(e.from_node_id)!.push({ to: e.to_node_id, edge_type: e.edge_type })
     }

@@ -348,6 +348,7 @@ export type Database = {
           id: string
           owner: string
           session_id: string
+          set_aside_at: string | null
           summary: string | null
           width: number | null
           x: number | null
@@ -363,6 +364,7 @@ export type Database = {
           id?: string
           owner?: string
           session_id: string
+          set_aside_at?: string | null
           summary?: string | null
           width?: number | null
           x?: number | null
@@ -378,6 +380,7 @@ export type Database = {
           id?: string
           owner?: string
           session_id?: string
+          set_aside_at?: string | null
           summary?: string | null
           width?: number | null
           x?: number | null
