@@ -211,12 +211,27 @@ canvasEventRoute.post('/canvas-event', async (c) => {
     }
 
     if (event_type === 'node.restored') {
+      const node_id = parsed.data.node_id!
       // Symmetric inverse of node.set_aside — the FE already cleared
       // set_aside_at, so the node is back in reasoning on the next agent run
-      // via the same live filters. A restore only adds information back, it
-      // never invalidates an in-flight offer, so there is nothing to warn.
-      const node_id = parsed.data.node_id!
-      logger.info('[route:canvas-event] node.restored', { canvas_id, session_id, node_id })
+      // via the same live filters, and the fingerprint trigger has already
+      // bumped canvas_version on that UPDATE.
+      //
+      // A restore adds information back rather than removing it, but that
+      // still invalidates an in-flight offer: the offer was reasoned about a
+      // canvas where this node did not exist, so it may assert something the
+      // restored node already answers. Fire the same impact event the
+      // set-aside path fires. Note it carries `restored_node_id`, NOT
+      // `deleted_node_id` — an offer generated while the node was hidden can
+      // never be anchored to it, so anchor-scoping would match nothing; the
+      // impact pipeline deliberately falls back to the coarse fingerprint
+      // check across every in-flight offer for the session (§6: over-warning
+      // is safe, under-warning is the risk).
+      await inngest.send({
+        name: 'canvas/intervention.impact',
+        data: { canvas_id, session_id, restored_node_id: node_id },
+      })
+      logger.info('[route:canvas-event] node.restored — impact event fired', { canvas_id, session_id, node_id })
       return c.json({ ok: true })
     }
 

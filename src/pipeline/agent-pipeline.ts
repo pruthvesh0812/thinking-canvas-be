@@ -542,11 +542,12 @@ export const agentPipeline = inngest.createFunction(
 
 // ─────────────────────────────────────────────────────────────────────────
 // IMPACT PIPELINE — triggered by canvas/intervention.impact, which
-// canvas-event.ts fires on node.deleted / edge.deleted (DESIGN §6; matrix
-// rows 7-8: trigger=no, show=yes — a delete never spawns a new offer on its
-// own, it only checks whether an offer already in flight for this session is
-// now stale). Runs the Impact Check (fingerprint compare) and, on a material
-// change, warns the offer in place rather than withdrawing it outright.
+// canvas-event.ts fires on node.deleted / edge.deleted / node.set_aside /
+// node.restored (DESIGN §6; matrix rows 7-8: trigger=no, show=yes — none of
+// these ever spawns a new offer on its own, they only check whether an offer
+// already in flight for this session is now stale). Runs the Impact Check
+// (fingerprint compare) and, on a material change, warns the offer in place
+// rather than withdrawing it outright.
 // ─────────────────────────────────────────────────────────────────────────
 export const interventionImpactPipeline = inngest.createFunction(
   { id: 'intervention-impact', triggers: [{ event: 'canvas/intervention.impact' }] },
@@ -556,6 +557,7 @@ export const interventionImpactPipeline = inngest.createFunction(
       session_id: string
       deleted_node_id?: string
       deleted_edge_id?: string
+      restored_node_id?: string
     }
 
     await step.run('warn-affected-offers', async () => {
@@ -563,11 +565,15 @@ export const interventionImpactPipeline = inngest.createFunction(
       const inFlight = await getInFlightForSession(session_id)
 
       for (const offer of inFlight) {
-        // Node deletes scope to offers actually anchored to the vanished node.
-        // Edge deletes can't be scoped this way (the row — and its endpoints —
-        // is already gone by the time this event fires), so they fall back to
-        // the coarse fingerprint check across every in-flight offer for the
-        // session. Over-warning is safe; under-warning is the risk (§6).
+        // Node deletes (and set-asides) scope to offers actually anchored to
+        // the vanished node. Edge deletes can't be scoped this way (the row —
+        // and its endpoints — is already gone by the time this event fires),
+        // and neither can restores (an offer reasoned about a canvas without
+        // the node cannot name it, so anchor-scoping a restore would match
+        // nothing). Both fall back to the coarse fingerprint check across
+        // every in-flight offer for the session — which is why the restore
+        // path sends `restored_node_id` rather than `deleted_node_id`.
+        // Over-warning is safe; under-warning is the risk (§6).
         const anchored = deleted_node_id
           ? offer.trigger_node_id === deleted_node_id || offer.anchor_node_ids.includes(deleted_node_id)
           : true
