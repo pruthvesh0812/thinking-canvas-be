@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 import { db } from '../db/client.js'
+import { getEdgesByCanvas } from '../db/edges.js'
 import { logger } from '../lib/logger.js'
 
 export const get_path = createTool({
@@ -27,26 +28,17 @@ export const get_path = createTool({
     const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_path] called', { canvas_id, from_node_id, to_node_id })
 
-    const [activeNodesResult, edgesResult] = await Promise.all([
-      db.from('nodes').select('id').eq('canvas_id', canvas_id).is('set_aside_at', null),
-      db.from('edges').select('from_node_id, to_node_id, edge_type').eq('canvas_id', canvas_id),
-    ])
-
-    if (activeNodesResult.error) {
-      logger.error('[tool:get_path] node load error', { canvas_id, error: activeNodesResult.error.message })
-      throw new Error(`get_path node load failed: ${activeNodesResult.error.message}`)
+    // Edges with BOTH endpoints active, excluded server-side in one round
+    // trip. A set-aside node must not be a stepping stone in the path —
+    // dropping every edge touching one before adjacency is built makes it
+    // unreachable (see CORE-CONCEPTS.md → set aside).
+    let edges
+    try {
+      edges = await getEdgesByCanvas(canvas_id)
+    } catch (err) {
+      logger.error('[tool:get_path] edge load error', { canvas_id, error: (err as Error).message })
+      throw err
     }
-    if (edgesResult.error) {
-      logger.error('[tool:get_path] edge load error', { canvas_id, error: edgesResult.error.message })
-      throw new Error(`get_path edge load failed: ${edgesResult.error.message}`)
-    }
-
-    // A set-aside node must not be a stepping stone in the path — drop any
-    // edge touching one before building adjacency (see CORE-CONCEPTS.md → set aside).
-    const activeIds = new Set((activeNodesResult.data ?? []).map(n => n.id))
-    const edges = (edgesResult.data ?? []).filter(
-      e => activeIds.has(e.from_node_id) && activeIds.has(e.to_node_id)
-    )
 
     const adjacency = new Map<string, { to: string; edge_type: string }[]>()
     for (const e of edges) {
@@ -64,11 +56,16 @@ export const get_path = createTool({
 
       if (current.node_id === to_node_id) {
         const node_ids = current.path.map(p => p.node_id)
+        // Adjacency is built from active-active edges only, so a path node
+        // can't already be set aside — the filter is kept anyway so this
+        // query can't start leaking set-aside summaries if that invariant is
+        // ever loosened, matching every other read in this file.
         const { data: nodes } = await db
           .from('nodes')
           .select('id, summary')
           .eq('canvas_id', canvas_id)
           .in('id', node_ids)
+          .is('set_aside_at', null)
 
         const summaryMap = new Map((nodes ?? []).map(n => [n.id, n.summary]))
         const pathLength = current.path.length - 1

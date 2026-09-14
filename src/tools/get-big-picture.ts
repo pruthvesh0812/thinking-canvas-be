@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 import { db } from '../db/client.js'
+import { getEdgesByCanvas } from '../db/edges.js'
 import { logger } from '../lib/logger.js'
 
 export const get_big_picture = createTool({
@@ -27,36 +28,27 @@ export const get_big_picture = createTool({
     const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_big_picture] called', { canvas_id })
 
-    const [nodesResult, edgesResult] = await Promise.all([
+    // A set-aside node contributes nothing to the bird's-eye map, edges
+    // touching it included (see CORE-CONCEPTS.md → set aside). Both halves
+    // exclude them server-side — getEdgesByCanvas keeps only edges whose two
+    // endpoints are active, so no client-side cross-check is needed.
+    const [nodesResult, activeEdges] = await Promise.all([
       db
         .from('nodes')
         .select('id, summary, direction_marker')
         .eq('canvas_id', canvas_id)
         .is('set_aside_at', null)
         .order('created_at', { ascending: true }),
-      db
-        .from('edges')
-        .select('from_node_id, to_node_id, edge_type')
-        .eq('canvas_id', canvas_id)
-        .order('created_at', { ascending: true }),
+      getEdgesByCanvas(canvas_id).catch((err: Error) => {
+        logger.error('[tool:get_big_picture] edges query error', { canvas_id, error: err.message })
+        throw err
+      }),
     ])
 
     if (nodesResult.error) {
       logger.error('[tool:get_big_picture] nodes query error', { canvas_id, error: nodesResult.error.message })
       throw new Error(`get_big_picture nodes failed: ${nodesResult.error.message}`)
     }
-    if (edgesResult.error) {
-      logger.error('[tool:get_big_picture] edges query error', { canvas_id, error: edgesResult.error.message })
-      throw new Error(`get_big_picture edges failed: ${edgesResult.error.message}`)
-    }
-
-    // A set-aside node contributes nothing to the bird's-eye map, edges
-    // touching it included (see CORE-CONCEPTS.md → set aside) — drop any
-    // edge whose endpoint fell out of the active-node fetch above.
-    const activeIds = new Set((nodesResult.data ?? []).map(n => n.id))
-    const activeEdges = (edgesResult.data ?? []).filter(
-      e => activeIds.has(e.from_node_id) && activeIds.has(e.to_node_id)
-    )
 
     logger.info('[tool:get_big_picture] ok', {
       canvas_id,
