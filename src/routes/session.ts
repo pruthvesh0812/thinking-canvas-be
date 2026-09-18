@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { SessionStartResponse } from '../../types/index.js'
 import { sessionStartSchema, sessionCompleteSchema } from '../../types/index.js'
 import { inngest } from '../lib/inngest.js'
 import { logger } from '../lib/logger.js'
@@ -11,7 +12,8 @@ const SESSION_BOUNDARY_CONTENT =
 
 export const sessionRoute = new Hono()
 
-// POST /api/session/start — opens a session. If the canvas already has prior
+// POST /api/session/start — opens a session, or returns the already-open one
+// (at most one active session per canvas). If the canvas already has prior
 // sessions, drops a session_boundary turn into every agent thread so the agents
 // can tell where the previous session ended.
 sessionRoute.post('/session/start', async (c) => {
@@ -25,6 +27,23 @@ sessionRoute.post('/session/start', async (c) => {
 
   try {
     const priorSessions = await getSessionsByCanvas(canvas_id)
+
+    // Enforce single active session per canvas: session/start is idempotent
+    // while one is already open — return it instead of creating a sibling.
+    // priorSessions is ordered oldest-first, so its index doubles as the
+    // 1-indexed session_number without a second query.
+    const activeIndex = priorSessions.findIndex((s) => s.status === 'active')
+    if (activeIndex !== -1) {
+      const active = priorSessions[activeIndex]
+      const session_number = activeIndex + 1
+      logger.info('[route:session] active session already open — returning it', {
+        canvas_id,
+        session_id: active.id,
+        session_number,
+      })
+      return c.json<SessionStartResponse>({ session_id: active.id, session_number })
+    }
+
     const session = await createSession(canvas_id)
 
     if (priorSessions.length > 0) {
@@ -41,12 +60,15 @@ sessionRoute.post('/session/start', async (c) => {
       )
     }
 
+    const session_number = priorSessions.length + 1
+
     logger.info('[route:session] started', {
       canvas_id,
       session_id: session.id,
       prior_sessions: priorSessions.length,
+      session_number,
     })
-    return c.json({ session_id: session.id })
+    return c.json<SessionStartResponse>({ session_id: session.id, session_number })
   } catch (err) {
     logger.error('[route:session] start failed', { canvas_id, error: (err as Error).message })
     return c.json({ error: 'internal error' }, 500)

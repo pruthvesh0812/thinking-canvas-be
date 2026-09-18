@@ -7,7 +7,6 @@ export const get_branch = createTool({
   id: 'get_branch',
   description: 'Fetch all nodes reachable from a branch root following outgoing edges — gives Stress-Tester the full subtree to find weak assumptions.',
   inputSchema: z.object({
-    canvas_id: z.string().uuid(),
     branch_root_node_id: z.string().uuid(),
   }),
   outputSchema: z.object({
@@ -18,22 +17,38 @@ export const get_branch = createTool({
       direction_marker: z.string().nullable(),
     })),
   }),
-  execute: async ({ context }) => {
-    const { canvas_id, branch_root_node_id } = context
+  // canvas_id is server-injected via requestContext — see get_content.ts.
+  requestContextSchema: z.object({
+    canvas_id: z.string().uuid(),
+  }),
+  execute: async (inputData, { requestContext }) => {
+    const { branch_root_node_id } = inputData
+    const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_branch] called', { canvas_id, branch_root_node_id })
 
-    const { data: edges, error: edgeErr } = await db
-      .from('edges')
-      .select('from_node_id, to_node_id')
-      .eq('canvas_id', canvas_id)
+    const [activeNodesResult, edgesResult] = await Promise.all([
+      db.from('nodes').select('id').eq('canvas_id', canvas_id).is('set_aside_at', null),
+      db.from('edges').select('from_node_id, to_node_id').eq('canvas_id', canvas_id),
+    ])
 
-    if (edgeErr) {
-      logger.error('[tool:get_branch] edge load error', { canvas_id, branch_root_node_id, error: edgeErr.message })
-      throw new Error(`get_branch edge load failed: ${edgeErr.message}`)
+    if (activeNodesResult.error) {
+      logger.error('[tool:get_branch] node load error', { canvas_id, branch_root_node_id, error: activeNodesResult.error.message })
+      throw new Error(`get_branch node load failed: ${activeNodesResult.error.message}`)
+    }
+    if (edgesResult.error) {
+      logger.error('[tool:get_branch] edge load error', { canvas_id, branch_root_node_id, error: edgesResult.error.message })
+      throw new Error(`get_branch edge load failed: ${edgesResult.error.message}`)
     }
 
+    // A set-aside node must not extend the subtree, nor be walked through to
+    // reach a descendant beyond it (see CORE-CONCEPTS.md → set aside).
+    const activeIds = new Set((activeNodesResult.data ?? []).map(n => n.id))
+    const edges = (edgesResult.data ?? []).filter(
+      e => activeIds.has(e.from_node_id) && activeIds.has(e.to_node_id)
+    )
+
     const adjacency = new Map<string, string[]>()
-    for (const e of edges ?? []) {
+    for (const e of edges) {
       if (!adjacency.has(e.from_node_id)) adjacency.set(e.from_node_id, [])
       adjacency.get(e.from_node_id)!.push(e.to_node_id)
     }
@@ -61,6 +76,7 @@ export const get_branch = createTool({
       .select('id, content, summary, direction_marker')
       .eq('canvas_id', canvas_id)
       .in('id', node_ids)
+      .is('set_aside_at', null)
 
     if (nodeErr) {
       logger.error('[tool:get_branch] node fetch error', { canvas_id, branch_root_node_id, error: nodeErr.message })

@@ -1,4 +1,5 @@
 import { Agent } from '@mastra/core/agent'
+import { RequestContext } from '@mastra/core/request-context'
 import { models } from '../lib/llm.js'
 import { logger } from '../lib/logger.js'
 import { getPrompt } from '../lib/prompts.js'
@@ -52,8 +53,12 @@ export async function streamOuterSubconscious(params: {
   logger.info('[agent:outer-subconscious] invoked', { canvas_id, trigger_node_id })
   const started_at = Date.now()
 
+  const requestContext = new RequestContext<{ canvas_id: string }>()
+  requestContext.set('canvas_id', canvas_id)
+
   try {
     return await outerSubconsciousAgent.stream(serialized_context, {
+      requestContext,
       providerOptions: { google: models.thinking('high') },
       onFinish: ({ usage, toolCalls, finishReason }) => {
         logger.info('[agent:outer-subconscious] stream complete', {

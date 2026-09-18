@@ -1,6 +1,14 @@
 import { db } from './client.js'
 import type { Edge } from '../../types/index.js'
 
+// Row shape returned by getEdgesByCanvas's embedded endpoint select — carries
+// just enough of each endpoint node to decide whether the edge touches a
+// set-aside node, stripped back out before returning.
+type EdgeWithEndpointAsideFlags = Edge & {
+  from_node: { set_aside_at: string | null } | null
+  to_node: { set_aside_at: string | null } | null
+}
+
 export async function getEdge(id: string): Promise<Edge> {
   const { data, error } = await db
     .from('edges')
@@ -12,15 +20,23 @@ export async function getEdge(id: string): Promise<Edge> {
   return data as Edge
 }
 
+// Every edge on the canvas whose endpoints are BOTH active — a set-aside node
+// contributes nothing to any agent's view of the canvas, edges included (see
+// CORE-CONCEPTS.md → set aside). Embeds each endpoint's set_aside_at in one
+// round trip rather than fetching nodes separately to cross-check.
 export async function getEdgesByCanvas(canvas_id: string): Promise<Edge[]> {
   const { data, error } = await db
     .from('edges')
-    .select('*')
+    .select('*, from_node:nodes!edges_from_node_id_fkey(set_aside_at), to_node:nodes!edges_to_node_id_fkey(set_aside_at)')
     .eq('canvas_id', canvas_id)
     .order('created_at', { ascending: true })
 
   if (error) throw new Error(`getEdgesByCanvas failed: ${error.message}`)
-  return (data ?? []) as Edge[]
+
+  const rows = (data ?? []) as EdgeWithEndpointAsideFlags[]
+  return rows
+    .filter(e => !e.from_node?.set_aside_at && !e.to_node?.set_aside_at)
+    .map(({ from_node, to_node, ...edge }) => edge)
 }
 
 export async function deleteEdge(edge_id: string): Promise<void> {

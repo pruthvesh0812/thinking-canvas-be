@@ -19,7 +19,18 @@ export type ContextNodeType =
   | 'contradiction'
   | 'appreciation'
 
-export type EdgeType = 'logical' | 'doubt' | 'question' | 'associative'
+// 'relate' is the DELIBERATE "articulate this connection" gesture — the only
+// edge type that triggers the Articulator immediately. 'logical' (and doubt /
+// associative) are silent structural edges: drawing one just rearranges the
+// canvas, absorbed into the next debounced pass, so the user isn't ambushed by
+// a ghost every time they tidy up their thinking. 'question' still fires the
+// Outer Subconscious.
+export type EdgeType = 'logical' | 'doubt' | 'question' | 'associative' | 'relate'
+
+// Which side of a node the edge attaches to. Frontend-owned (React Flow
+// handle id); backend never reads it. Enforced by CHECK constraint on the
+// edges table.
+export type EdgeHandle = 'TOP' | 'RIGHT' | 'LEFT' | 'BOTTOM'
 
 export type DirectionMarker = 'establishes' | 'questions' | 'contradicts' | 'explores'
 
@@ -97,6 +108,12 @@ export type Node = {
   width: number | null
   height: number | null
   created_at: string
+  // Soft-archive — NULL = active (default), non-NULL = set aside at that
+  // instant. A set-aside node is preserved, never destroyed, but every
+  // reasoning read filters it (and any edge touching it) out live — see
+  // CORE-CONCEPTS.md → set aside. Only owner='ai' nodes are ever set aside;
+  // frontend-written directly (same class as content/position edits).
+  set_aside_at: string | null
 }
 
 // The Observer's canvas map only ever reads these fields off a node (never
@@ -117,6 +134,12 @@ export type Edge = {
   to_node_id: string
   edge_type: EdgeType
   both_existing: boolean
+  // Frontend-owned handle attachments — restored on refetch so an edge
+  // reattaches to the exact same sides it left. Backend never reads or
+  // writes these; agent pipelines route off edge_type / both_existing only.
+  // Nullable to keep pre-migration edges valid.
+  from_handle: EdgeHandle | null
+  to_handle: EdgeHandle | null
   created_at: string
 }
 
@@ -265,6 +288,16 @@ export type SpawnDescriptor = {
   trigger_node_id: string
   session_id: string
 
+  // Set for edge-triggered spawns (Articulator via a `relate` edge); undefined
+  // for node-triggered spawns (Expander / Stress-Tester / Outer Subconscious).
+  trigger_edge_id?: string
+
+  // The canvas nodes the ghost pair visually anchors to — the frontend drives
+  // its halos off this single field. ALWAYS populated: [trigger_node_id] for a
+  // node-triggered spawn, [from_node_id, to_node_id] (source first) for a
+  // relate-triggered Articulator run.
+  anchor_node_ids: string[]
+
   context_node: {
     ghost_id: string
     node_type: ContextNodeType
@@ -407,6 +440,11 @@ export const canvasEventSchema = z
       'edge.created',
       'edge.deleted',
       'ghost.accepted',
+      // Set-aside (soft-archive) — frontend writes set_aside_at directly to
+      // Supabase, then notifies via one of these two, IDs only. See
+      // CORE-CONCEPTS.md → set aside.
+      'node.set_aside',
+      'node.restored',
     ]),
   })
   .refine(
@@ -419,7 +457,9 @@ export const canvasEventSchema = z
       const isNodeEvent =
         d.event_type === 'node.created' ||
         d.event_type === 'node.updated' ||
-        d.event_type === 'node.deleted'
+        d.event_type === 'node.deleted' ||
+        d.event_type === 'node.set_aside' ||
+        d.event_type === 'node.restored'
       return isNodeEvent ? !!d.node_id : !!d.edge_id
     },
     {
@@ -463,6 +503,14 @@ export const sessionStartSchema = z.object({
 })
 
 export type SessionStartPayload = z.infer<typeof sessionStartSchema>
+
+// Response of POST /api/session/start. session_number is 1-indexed —
+// priorSessions.length + 1 — so the frontend can render "Session N" without
+// deriving it client-side from a full sessions fetch.
+export type SessionStartResponse = {
+  session_id: string
+  session_number: number
+}
 
 // POST /api/session/complete
 export const sessionCompleteSchema = z.object({

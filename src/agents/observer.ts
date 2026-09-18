@@ -1,4 +1,5 @@
 import { Agent } from '@mastra/core/agent'
+import { RequestContext } from '@mastra/core/request-context'
 import { z } from 'zod'
 import { models } from '../lib/llm.js'
 import { logger } from '../lib/logger.js'
@@ -245,8 +246,12 @@ export async function runObserver(params: {
     ? `${serialized_context}\n\n${rethinkBlock(rethink)}`
     : serialized_context
 
+  const requestContext = new RequestContext<{ canvas_id: string }>()
+  requestContext.set('canvas_id', canvas_id)
+
   try {
     const { object } = await observerAgent.generate(prompt, {
+      requestContext,
       structuredOutput: { schema: observerOutputSchema },
       providerOptions: { google: models.thinking('high') },
     })

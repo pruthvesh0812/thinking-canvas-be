@@ -12,8 +12,10 @@
     "migrate:prod": "supabase db push --linked",
     "gen:types:local": "supabase gen types typescript --local > src/db/database.types.ts",
     "gen:types:prod": "supabase gen types typescript --linked > src/db/database.types.ts",
-    "inngest:dev": "npx inngest-cli@latest dev",
-    "seed:prompts": "tsx --env-file=.env scripts/seed-prompts.ts"
+    "inngest:dev": "npm rebuild --ignore-scripts=false inngest-cli && inngest-cli dev",
+    "seed:prompts": "tsx --env-file=.env scripts/seed-prompts.ts",
+    "backfill:enrichment": "tsx --env-file=.env scripts/backfill-node-enrichment.ts",
+    "inspect:context": "tsx --env-file=.env scripts/inspect-context.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "latest",
@@ -34,7 +36,7 @@
   "devDependencies": {
     "@types/node": "^20",
     "inngest-cli": "^1.31.0",
-    "supabase": "^2.105.0",
+    "supabase": "^2.113.0",
     "tsx": "latest",
     "typescript": "^5",
     "vitest": "latest"

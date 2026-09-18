@@ -11,7 +11,7 @@ import { runJudge } from '../agents/orchestrator.js'
 import { streamExpander } from '../agents/expander.js'
 import { streamStressTester } from '../agents/stress-tester.js'
 import { serialize, serializeJudgeContext } from '../serializer/index.js'
-import { getRecentNodes } from '../db/nodes.js'
+import { getRecentNodes, getNode } from '../db/nodes.js'
 import { getCanvas } from '../db/canvases.js'
 import { getSession, maybeAdvancePhase, getReceptivity, applyReceptivityResponse } from '../db/sessions.js'
 import { getTierByUser } from '../db/subscriptions.js'
@@ -375,6 +375,24 @@ export const agentPipeline = inngest.createFunction(
     })
 
     await step.sleep('ghost-animation', '1500ms')
+
+    // Record this node as a canvas_event turn — the "user" half of the
+    // (canvas_event → ghost_pair) pair the tiered serializer expects (see
+    // SERIALIZATION.md → Node-Anchored Format). serializeTiered/formatTier1
+    // only ever render `canvas_event` turns, so without this the agent gets
+    // no active-node block at all. Own step — appendMessage is a
+    // non-idempotent DB write and must never replay.
+    await step.run('record-canvas-event', async () => {
+      const node = await getNode(node_id)
+      const thread = await getOrCreateThread(canvas_id, finalRoute)
+      await appendMessage(thread.id, {
+        role: 'user',
+        turn_type: 'canvas_event',
+        node_id,
+        content: node.content ?? node.summary ?? '',
+        timestamp: new Date().toISOString(),
+      })
+    })
 
     const context = await step.run('serialize', async () => {
       const thread = await getOrCreateThread(canvas_id, finalRoute)

@@ -84,6 +84,16 @@ correctly at insert time (the backend reads them verbatim, never recomputes):
   canvas before the edge was drawn → Articulator. A drag-out-to-new-node edge
   is `both_existing: false`.
 
+Two additional columns are also frontend-owned, purely for restoring the
+exact visual reconnection on refetch (backend never reads them):
+
+- `from_handle`, `to_handle`: `'TOP' | 'RIGHT' | 'LEFT' | 'BOTTOM'` — which
+  side of the source / target node the edge attaches to (React Flow handle
+  id). Written on edge create; a CHECK constraint on the table rejects any
+  other value (NULL passes for backward-compatibility with pre-migration
+  rows). No Plane 2 notify on a handle-only change — the backend is
+  intentionally blind to visual reconnection.
+
 ### 3.3 Other tables the FE touches
 
 | Table | FE access | Purpose |
@@ -162,12 +172,22 @@ arrive opportunistically on Plane 3 or not at all.
 
 ### 5.3 `POST /api/session/start`
 
-`{ "canvas_id": uuid }` → **`200 { "session_id": uuid }`**. New sessions start
-`status:'active'`, `current_phase:'diverging'`. If prior sessions exist, a
-session-boundary marker turn is appended to every agent thread — this is why
-the FE must never insert `sessions` rows directly. Only one active session per
-canvas is a **convention the FE must enforce** (complete the old one first);
-the backend does not reject a second active session.
+`{ "canvas_id": uuid }` → **`200 { "session_id": uuid, "session_number": number }`**.
+`session_number` is 1-indexed (`priorSessions.length + 1`) — render it directly
+as "Session N"; do not derive it client-side by fetching all sessions for the
+canvas and using array position, that duplicates work the backend already did
+for this exact purpose. New sessions start `status:'active'`,
+`current_phase:'diverging'`. If prior sessions exist, a session-boundary
+marker turn is appended to every agent thread — this is why the FE must never
+insert `sessions` rows directly.
+
+**Idempotent while a session is open:** at most one active session per canvas
+is now enforced server-side. If the canvas already has a `status:'active'`
+row, the route returns that session's `session_id` + `session_number`
+unchanged — it does **not** create a new session or append a boundary turn.
+The FE can safely call `session/start` on canvas open without first checking
+`sessions.status` itself; treat the response the same whether it opened a new
+session or handed back the existing one.
 
 ### 5.4 `POST /api/session/complete`
 
@@ -396,4 +416,7 @@ deletes the FE workarounds noted above.
 | 3 | P1 | `carry_forward_ids` accepted, ignored | Wire into session-complete (persist chosen unresolved threads as `session_learnings`) or drop from the schema until built |
 | 4 | P2 | No Stripe checkout endpoint; webhook expects `metadata.user_id` set by whoever creates the subscription | Add `POST /api/stripe/checkout` creating the session with `metadata.user_id` |
 | 5 | P2 | `interacted_at` validated but unused | Use for `ignored`-status heuristics or drop |
-| 6 | P2 | Second active session per canvas isn't rejected by `session/start` | Return 409 when an active session exists for the canvas |
+
+> **Resolved (2026-08-16):** row 6 — second active session per canvas — is
+> fixed. `session/start` now returns the existing active session (200,
+> idempotent) instead of creating a sibling; see §5.3.

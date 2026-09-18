@@ -16,6 +16,12 @@ export function buildSpawnDescriptor(params: {
   agent_role: AgentRole
   context_node_type: ContextNodeType
   has_question_node: boolean
+  // Edge-triggered spawns (Articulator via a `relate` edge) pass the edge id.
+  trigger_edge_id?: string
+  // The nodes the ghost pair anchors to. Defaults to [trigger_node_id] for
+  // node-triggered spawns; a relate-triggered Articulator run passes
+  // [from_node_id, to_node_id] (source first).
+  anchor_node_ids?: string[]
 }): SpawnDescriptor {
   const context_ghost_id = randomUUID()
   const question_ghost_id = params.has_question_node ? randomUUID() : undefined
@@ -23,6 +29,8 @@ export function buildSpawnDescriptor(params: {
   return {
     trigger_node_id: params.trigger_node_id,
     session_id: params.session_id,
+    ...(params.trigger_edge_id && { trigger_edge_id: params.trigger_edge_id }),
+    anchor_node_ids: params.anchor_node_ids ?? [params.trigger_node_id],
     context_node: {
       ghost_id: context_ghost_id,
       node_type: params.context_node_type,

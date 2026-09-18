@@ -29,7 +29,12 @@ export const models = {
 // Embedding — node save pipeline + semantic_promote
 // ─────────────────────────────────────────────
 
-const embeddingModel = google.textEmbeddingModel('gemini-embedding-exp-03-07')
+// gemini-embedding-001 — 3072 dims, matching nodes.embedding VECTOR(3072).
+// The previous 'gemini-embedding-exp-03-07' was retired by Google and returns
+// 404, which silently broke the entire node-enrichment pipeline (see
+// enrichNode in src/routes/canvas-event.ts). Verify with a live embedContent
+// call before ever changing this string.
+const embeddingModel = google.textEmbeddingModel('gemini-embedding-001')
 
 export async function generateEmbedding(text: string): Promise<number[]> {
   const { embedding } = await embed({
