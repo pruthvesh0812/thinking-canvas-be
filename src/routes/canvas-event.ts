@@ -9,6 +9,7 @@ import { getNode, updateSummary, updateEmbedding } from '../db/nodes.js'
 import { appendToNodeSequence, getSession } from '../db/sessions.js'
 import { getEdge } from '../db/edges.js'
 import { recordContribution } from '../db/ai-contributions.js'
+import { ownsSession } from '../lib/ownership.js'
 
 // System prompt is a constant — never interpolated from user data.
 const DIRECTIONAL_SUMMARY_PROMPT = `
@@ -86,6 +87,10 @@ canvasEventRoute.post('/canvas-event', async (c) => {
   logger.info('[route:canvas-event] received', { canvas_id, session_id, event_type })
 
   try {
+    if (!(await ownsSession(c.get('userId'), session_id, canvas_id))) {
+      return c.json({ error: 'forbidden' }, 403)
+    }
+
     if (event_type === 'node.created' || event_type === 'node.updated') {
       const node_id = parsed.data.node_id!
 

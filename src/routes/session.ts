@@ -5,6 +5,7 @@ import { inngest } from '../lib/inngest.js'
 import { logger } from '../lib/logger.js'
 import { createSession, getSessionsByCanvas } from '../db/sessions.js'
 import { getAllByCanvas, appendMessage } from '../db/threads.js'
+import { ownsCanvas, ownsSession } from '../lib/ownership.js'
 
 // Constant marker turn — never built from user input.
 const SESSION_BOUNDARY_CONTENT =
@@ -26,6 +27,10 @@ sessionRoute.post('/session/start', async (c) => {
   const { canvas_id } = parsed.data
 
   try {
+    if (!(await ownsCanvas(c.get('userId'), canvas_id))) {
+      return c.json({ error: 'forbidden' }, 403)
+    }
+
     const priorSessions = await getSessionsByCanvas(canvas_id)
 
     // Enforce single active session per canvas: session/start is idempotent
@@ -87,6 +92,10 @@ sessionRoute.post('/session/complete', async (c) => {
   const { canvas_id, session_id } = parsed.data
 
   try {
+    if (!(await ownsSession(c.get('userId'), session_id, canvas_id))) {
+      return c.json({ error: 'forbidden' }, 403)
+    }
+
     await inngest.send({
       name: 'canvas/session.completed',
       data: { canvas_id, session_id },
