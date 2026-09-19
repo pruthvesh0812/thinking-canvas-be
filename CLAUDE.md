@@ -215,11 +215,19 @@ tools, serializer, all 7 agents, ghost streaming, all 5 Inngest pipelines, and
 the API routes exist. The frontend repo (thinking-canvas-web) has **not been
 started** — `FRONTEND-CONTRACT.md` is its build-against contract.
 
+> **Intervention Spectrum is BUILT in `src/` and, as of 2026-09-19, reachable.**
+> The judge, offers, `waiting`/`offer`/`withdraw` messages, phase latch, the
+> `agentPipeline`/`interventionImpactPipeline` functions and the
+> `/api/intervention/*` routes all exist. `interventionRoute` had been left
+> unmounted in `src/index.ts` (the proactive path was dead); it is now mounted
+> behind `requireAuth`. The remaining work is on the **frontend** — it must call
+> the routes and handle the new SSE messages. See
+> `.ai/product/03-status/feature-status.md` and `known-gaps.md` #11.
+
 **Designed but NOT implemented (do not assume these exist in code):**
 
 | Item | Where the design lives |
 |---|---|
-| Intervention Spectrum (judge, offers, `waiting`/`offer`/`withdraw` messages, phase latch) | `.ai/features/intervention-spectrum/` — status: draft |
 | Observer structure writes + per-edge accept/reject (`observer_structures`/`observer_edges` rows, `POST /api/observer-edge-status`) | Tables + Zod schema exist; no pipeline writes, no route |
 | Branching | `.ai/features/branching/story.md` — deferred |
 | Session branching (fork new sessions from a closed session) | `.ai/features/session-branching/story.md` — deferred |

@@ -7,6 +7,7 @@ import { getOffer, updateOfferStatus, getInFlightForSession } from '../db/interv
 import { getCanvas } from '../db/canvases.js'
 import { applyReceptivityResponse } from '../db/sessions.js'
 import { checkImpact, IMPACT_WARNING } from '../lib/intervention.js'
+import { ownsSession } from '../lib/ownership.js'
 
 export const interventionRoute = new Hono()
 
@@ -53,6 +54,13 @@ interventionRoute.post('/intervention/trigger', async (c) => {
   const offer_id = randomUUID()
 
   try {
+    // requireAuth proved WHO is calling; canvas_id/session_id come from the body,
+    // so verify the caller owns this session on this canvas before firing the
+    // judge on their behalf (ownsSession scopes the session to the canvas too).
+    if (!(await ownsSession(c.get('userId'), session_id, canvas_id))) {
+      return c.json({ error: 'forbidden' }, 403)
+    }
+
     await inngest.send({
       name: 'canvas/intervention.trigger',
       data: { canvas_id, session_id, node_id, offer_id },
@@ -78,6 +86,19 @@ interventionRoute.post('/intervention/process', async (c) => {
   const { offer_id, session_id, canvas_id, reason } = parsed.data
 
   try {
+    if (!(await ownsSession(c.get('userId'), session_id, canvas_id))) {
+      return c.json({ error: 'forbidden' }, 403)
+    }
+
+    // offer_id is client-supplied too: it must belong to the session we just
+    // verified, or a caller could wake someone else's parked run by pairing
+    // their own session_id/canvas_id with another user's offer_id.
+    const offer = await getOffer(offer_id)
+    if (offer.session_id !== session_id || offer.canvas_id !== canvas_id) {
+      logger.warn('[route:intervention] process offer/session mismatch', { offer_id, session_id })
+      return c.json({ error: 'forbidden' }, 403)
+    }
+
     await inngest.send({
       name: 'canvas/intervention.process',
       data: { offer_id, session_id, canvas_id, reason },
@@ -103,7 +124,13 @@ interventionRoute.post('/intervention/dismiss', async (c) => {
   const { offer_id } = parsed.data
 
   try {
+    // dismiss carries only offer_id, so ownership is proven through the offer's
+    // own session: load it first, then confirm the caller owns that session
+    // before mutating status / folding the receptivity signal.
     const offer = await getOffer(offer_id)
+    if (!(await ownsSession(c.get('userId'), offer.session_id))) {
+      return c.json({ error: 'forbidden' }, 403)
+    }
     await updateOfferStatus(offer_id, 'dismissed')
     // Fold the "dismissed" TIMING signal into receptivity BEFORE the offer is
     // purge-eligible (§4f, §8) — never rejection_insights; dismiss ≠ reject.
@@ -135,7 +162,17 @@ interventionRoute.post('/intervention/ghost-interaction', async (c) => {
   const { offer_id, canvas_id, session_id, node_id, interaction } = parsed.data
 
   try {
+    if (!(await ownsSession(c.get('userId'), session_id, canvas_id))) {
+      return c.json({ error: 'forbidden' }, 403)
+    }
+
     const [offer, canvas] = await Promise.all([getOffer(offer_id), getCanvas(canvas_id)])
+    // The offer id is client-supplied — it must belong to the session/canvas we
+    // just verified before we read its fingerprint or re-trigger off it.
+    if (offer.session_id !== session_id || offer.canvas_id !== canvas_id) {
+      logger.warn('[route:intervention] ghost-interaction offer/session mismatch', { offer_id, session_id })
+      return c.json({ error: 'forbidden' }, 403)
+    }
     const verdict = checkImpact(offer.context_fingerprint, canvas.canvas_version.toString())
 
     if (verdict === 'none') {

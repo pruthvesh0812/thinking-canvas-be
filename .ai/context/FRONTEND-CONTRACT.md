@@ -411,7 +411,6 @@ deletes the FE workarounds noted above.
 
 | # | Severity | Gap | Recommended fix |
 |---|---|---|---|
-| 1 | P1 | No auth on Plane 2/3 — any origin-bypassing client can post events / read a session's stream by uuid | Verify Supabase JWT (Authorization: Bearer) on all /api routes; token query-param for EventSource |
 | 2 | P1 | Free tier reaches Outer Subconscious via question edges (tier checked only in the debounced pipeline) | `getTierByUser` + `getAvailableAgents` gate inside `outer-sub-pipeline` (and articulator for symmetry) |
 | 3 | P1 | `carry_forward_ids` accepted, ignored | Wire into session-complete (persist chosen unresolved threads as `session_learnings`) or drop from the schema until built |
 | 4 | P2 | No Stripe checkout endpoint; webhook expects `metadata.user_id` set by whoever creates the subscription | Add `POST /api/stripe/checkout` creating the session with `metadata.user_id` |
@@ -420,3 +419,27 @@ deletes the FE workarounds noted above.
 > **Resolved (2026-08-16):** row 6 — second active session per canvas — is
 > fixed. `session/start` now returns the existing active session (200,
 > idempotent) instead of creating a sibling; see §5.3.
+
+> **Resolved (2026-09-19):** row 1 — no auth on Plane 2/3 — is fixed.
+> `requireAuth` (`src/lib/auth.ts`) verifies a Supabase JWT on every `/api`
+> route (Bearer header, or `?token=` for the EventSource stream), and every
+> route that takes a `canvas_id`/`session_id` from the body ownership-checks it
+> via `ownsCanvas`/`ownsSession` (`src/lib/ownership.ts`) — including all four
+> `/api/intervention/*` handlers.
+
+> **Resolved (2026-09-19):** the proactive AI path is reconnected. The
+> intervention routes existed but `interventionRoute` was never mounted in
+> `src/index.ts` (dropped in a route reorder), so `POST /api/intervention/*`
+> 404'd and `canvas/intervention.trigger` was never sent — leaving the judge,
+> Expander, Stress-Tester, Attunement, phase latch, receptivity, and
+> tier-locked upgrade offers all unreachable. `interventionRoute` is now mounted
+> behind `requireAuth`. **This surfaces the last remaining piece as a FRONTEND
+> gap, not a backend one:** the FE must now actually call these routes and
+> handle the new SSE messages — see §10 item 2 and
+> `.ai/product/03-status/known-gaps.md` #11 for the FE work.
+>
+> The backend deliberately does **not** re-fire generation off
+> `canvas/node.created` (a now-subscriberless event): re-adding an interim
+> consumer would resurrect the ambient auto-fire model the intervention layer
+> replaced, spending a judge call on every node with no consent gate. The
+> trigger gate is the frontend's job by design (§01-trigger-and-handshake).

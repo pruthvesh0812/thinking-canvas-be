@@ -57,6 +57,12 @@ app.route('/api', canvasEventRoute)
 app.route('/api', streamRoute)
 app.route('/api', ghostStatusRoute)
 app.route('/api', sessionRoute)
+// Intervention layer (decide→wait→generate). Every handler takes canvas_id/
+// session_id from the body and ownership-checks it — mounted after requireAuth
+// like the other body-id routes. This is the proactive path's only entry point;
+// without it the judge, Expander, Stress-Tester, phase latch, receptivity, and
+// tier-locked upgrade offers are all unreachable.
+app.route('/api', interventionRoute)
 
 
 serve({ fetch: app.fetch, port: 3001 }, (info) => {
