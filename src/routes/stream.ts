@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { redis } from '../lib/redis.js'
 import { logger } from '../lib/logger.js'
+import { ownsSession } from '../lib/ownership.js'
 import type { RedisMessage } from '../../types/index.js'
 
 export const streamRoute = new Hono()
@@ -9,9 +10,18 @@ export const streamRoute = new Hono()
 // GET /api/stream/:sessionId — the only server-to-client push channel. Subscribes
 // to the session's Redis channel and forwards every ghost message to the browser
 // as an SSE data event. @upstash/redis delivers messages already deserialized.
-streamRoute.get('/stream/:sessionId', (c) => {
+streamRoute.get('/stream/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId')
   const channel = `canvas:stream:${sessionId}`
+
+  try {
+    if (!(await ownsSession(c.get('userId'), sessionId))) {
+      return c.json({ error: 'forbidden' }, 403)
+    }
+  } catch (err) {
+    logger.error('[route:stream] ownership check failed', { session_id: sessionId, error: (err as Error).message })
+    return c.json({ error: 'internal error' }, 500)
+  }
 
   return streamSSE(c, async (stream) => {
     const sub = redis.subscribe<RedisMessage>(channel)

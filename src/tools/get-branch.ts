@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 import { db } from '../db/client.js'
+import { getEdgesByCanvas } from '../db/edges.js'
 import { logger } from '../lib/logger.js'
 
 export const get_branch = createTool({
@@ -26,26 +27,17 @@ export const get_branch = createTool({
     const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:get_branch] called', { canvas_id, branch_root_node_id })
 
-    const [activeNodesResult, edgesResult] = await Promise.all([
-      db.from('nodes').select('id').eq('canvas_id', canvas_id).is('set_aside_at', null),
-      db.from('edges').select('from_node_id, to_node_id').eq('canvas_id', canvas_id),
-    ])
-
-    if (activeNodesResult.error) {
-      logger.error('[tool:get_branch] node load error', { canvas_id, branch_root_node_id, error: activeNodesResult.error.message })
-      throw new Error(`get_branch node load failed: ${activeNodesResult.error.message}`)
+    // Edges with BOTH endpoints active, excluded server-side in one round
+    // trip. A set-aside node must not extend the subtree, nor be walked
+    // through to reach a descendant beyond it (see CORE-CONCEPTS.md → set
+    // aside) — dropping its edges here does both.
+    let edges
+    try {
+      edges = await getEdgesByCanvas(canvas_id)
+    } catch (err) {
+      logger.error('[tool:get_branch] edge load error', { canvas_id, branch_root_node_id, error: (err as Error).message })
+      throw err
     }
-    if (edgesResult.error) {
-      logger.error('[tool:get_branch] edge load error', { canvas_id, branch_root_node_id, error: edgesResult.error.message })
-      throw new Error(`get_branch edge load failed: ${edgesResult.error.message}`)
-    }
-
-    // A set-aside node must not extend the subtree, nor be walked through to
-    // reach a descendant beyond it (see CORE-CONCEPTS.md → set aside).
-    const activeIds = new Set((activeNodesResult.data ?? []).map(n => n.id))
-    const edges = (edgesResult.data ?? []).filter(
-      e => activeIds.has(e.from_node_id) && activeIds.has(e.to_node_id)
-    )
 
     const adjacency = new Map<string, string[]>()
     for (const e of edges) {

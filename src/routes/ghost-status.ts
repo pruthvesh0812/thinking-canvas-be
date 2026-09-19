@@ -3,6 +3,7 @@ import { ghostStatusSchema } from '../../types/index.js'
 import { inngest } from '../lib/inngest.js'
 import { logger } from '../lib/logger.js'
 import { getById, setGhostPairStatus } from '../db/threads.js'
+import { ownsSession } from '../lib/ownership.js'
 import type { GhostStatus } from '../../types/index.js'
 
 export const ghostStatusRoute = new Hono()
@@ -36,8 +37,14 @@ ghostStatusRoute.post('/ghost-status', async (c) => {
   })
 
   try {
+    if (!(await ownsSession(c.get('userId'), p.session_id, p.canvas_id))) {
+      return c.json({ error: 'forbidden' }, 403)
+    }
+
     const thread = await getById(p.thread_id)
-    if (!thread) return c.json({ error: 'thread not found' }, 404)
+    // thread_id is client-supplied too: it must sit on the canvas we just
+    // verified, or an owner could mutate someone else's thread.
+    if (!thread || thread.canvas_id !== p.canvas_id) return c.json({ error: 'thread not found' }, 404)
 
     const turn = thread.messages[p.turn_index]
     if (!turn || turn.turn_type !== 'ghost_pair') {
