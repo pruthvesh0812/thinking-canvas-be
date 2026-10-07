@@ -95,6 +95,8 @@ const embedding = await generateEmbedding(node.content)
 | Articulator | `models.content()` | OFF |
 | Attunement Layer | `models.fast()` | OFF |
 | Orchestrator | `models.fast()` | OFF |
+| Jev (canvas-template shape classifier) | `models.fast()` | OFF |
+| Hierarchy / Sequence content agents (canvas templates) | `models.content()` | OFF |
 | Observer | `models.fast()` | `thinking('high')` |
 | Outer Subconscious | `models.fast()` | `thinking('high')` |
 | Rejection Insights Engine | `models.fast()` | `thinking('low')` |

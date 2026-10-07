@@ -201,6 +201,30 @@ tolerate eventual consistency.
 > and pipeline (§11). Don't build the "Carry Forward / Discard" screen
 > expecting it to persist anything yet.
 
+### 5.5 `POST /api/canvas-template`
+
+Stateless — no `canvas_id`/`session_id`, nothing persisted, nothing over Redis.
+Natural-language query in, a shape-first layout out. Jev (classifier) picks
+`hierarchy` | `sequence`; the matching content agent fills that schema; a
+validation backstop (`src/lib/template-validation.ts`) normalises the result.
+
+Request: `{ "query": string, "context": null | { "parent_id", "parent_label",
+"parent_detail", "sibling_labels": string[] } }` — `context` is `null` for a
+fresh root query and populated when expanding a node (siblings are passed so
+the agent doesn't repeat them).
+
+Response `200`: `{ "shape": "hierarchy"|"sequence", "payload": {...} }`.
+- hierarchy payload: `{shape, root:{id,label,detail,children:[{id,label,kind,link,detail}]}}`
+  — 2–4 children, `kind` ∈ `idea|example|question`.
+- sequence payload: `{shape, title, detail, steps:[{id,order,label,detail,transition?}]}`
+  — 3–6 steps, `order` 1-indexed, no `transition` on the last step.
+
+Errors: `400 {error, issues}` for an invalid body; `500 {error, fallback_shape:"hierarchy"}`
+on any pipeline failure — show a retry affordance, never a partial payload.
+Over-long fields are truncated server-side (`…` appended); counts are clamped;
+ids are guaranteed unique within the payload. An under-filled result (hierarchy
+< 2 children, sequence < 3 steps) is retried once, then returned as-is.
+
 ---
 
 ## 6. Plane 3 — SSE Stream Protocol

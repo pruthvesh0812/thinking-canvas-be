@@ -14,6 +14,7 @@ import { ghostStatusRoute } from './routes/ghost-status.js'
 import { sessionRoute } from './routes/session.js'
 import { stripeRoute } from './routes/stripe.js'
 import { interventionRoute } from './routes/intervention.js'
+import { canvasTemplateRoute } from './routes/canvas-template.js'
 
 // Inngest pipeline functions
 import { agentPipeline, interventionImpactPipeline } from './pipeline/agent-pipeline.js'
@@ -36,6 +37,7 @@ app.route('/api', streamRoute)
 app.route('/api', ghostStatusRoute)
 app.route('/api', sessionRoute)
 app.route('/api', stripeRoute)
+app.route('/api', canvasTemplateRoute)
 // Inngest worker — all five pipeline functions registered here.
 const inngestHandler = inngestServe({
   client: inngest,

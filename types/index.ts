@@ -520,3 +520,66 @@ export const sessionCompleteSchema = z.object({
 })
 
 export type SessionCompletePayload = z.infer<typeof sessionCompleteSchema>
+
+// ─────────────────────────────────────────────
+// Canvas templates — POST /api/canvas-template
+// Stateless: natural-language query in, shape-first structured layout out.
+// ─────────────────────────────────────────────
+
+export type TemplateShape = 'hierarchy' | 'sequence'
+
+export type HierarchyChildKind = 'idea' | 'example' | 'question'
+
+export type HierarchyPayload = {
+  shape: 'hierarchy'
+  root: {
+    id: string
+    label: string
+    detail: string
+    children: Array<{
+      id: string
+      label: string
+      kind: HierarchyChildKind
+      link: string
+      detail: string
+    }>
+  }
+}
+
+export type SequencePayload = {
+  shape: 'sequence'
+  title: string
+  detail: string
+  steps: Array<{
+    id: string
+    order: number
+    label: string
+    detail: string
+    transition?: string  // omitted on the last step
+  }>
+}
+
+export type CanvasTemplateResponse =
+  | { shape: 'hierarchy'; payload: HierarchyPayload }
+  | { shape: 'sequence'; payload: SequencePayload }
+
+export type CanvasTemplateError = {
+  error: string
+  fallback_shape: 'hierarchy'
+}
+
+// context is null/absent for a fresh root query; populated on node expansion.
+export const canvasTemplateRequestSchema = z.object({
+  query: z.string().trim().min(1).max(2000),
+  context: z
+    .object({
+      parent_id: z.string().nullable().optional(),
+      parent_label: z.string().nullable().optional(),
+      parent_detail: z.string().nullable().optional(),
+      sibling_labels: z.array(z.string()).optional(),
+    })
+    .nullable()
+    .optional(),
+})
+
+export type CanvasTemplateRequest = z.infer<typeof canvasTemplateRequestSchema>

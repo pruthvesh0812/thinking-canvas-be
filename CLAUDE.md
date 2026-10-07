@@ -57,6 +57,8 @@ thinking-canvas-api/
 │   │   ├── outer-subconscious.ts
 │   │   ├── articulator.ts
 │   │   ├── attunement.ts
+│   │   ├── jev.ts                  # canvas-template shape classifier
+│   │   ├── template-content.ts     # hierarchy + sequence content agents
 │   │   └── orchestrator.ts
 │   ├── tools/              # Cursor tools
 │   │   ├── get-content.ts
@@ -95,6 +97,7 @@ thinking-canvas-api/
 │   │   ├── stream.ts       # GET /api/stream/:sessionId (SSE via Redis)
 │   │   ├── ghost-status.ts # POST /api/ghost-status
 │   │   ├── session.ts      # POST /api/session/complete, /api/session/start
+│   │   ├── canvas-template.ts # POST /api/canvas-template (stateless Jev → content agent)
 │   │   └── stripe.ts       # POST /api/stripe/webhook
 │   ├── lib/
 │   │   ├── redis.ts        # Upstash Redis client

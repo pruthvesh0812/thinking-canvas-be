@@ -10,9 +10,14 @@ import { ARTICULATOR_SYSTEM_PROMPT } from '../src/agents/articulator.js'
 import { ATTUNEMENT_SYSTEM_PROMPT } from '../src/agents/attunement.js'
 import { EXPANDER_SYSTEM_PROMPT } from '../src/agents/expander.js'
 import { OBSERVER_SYSTEM_PROMPT } from '../src/agents/observer.js'
+import { JEV_SYSTEM_PROMPT } from '../src/agents/jev.js'
 import { JUDGE_SYSTEM_PROMPT } from '../src/agents/orchestrator.js'
 import { OUTER_SUBCONSCIOUS_SYSTEM_PROMPT } from '../src/agents/outer-subconscious.js'
 import { STRESS_TESTER_SYSTEM_PROMPT } from '../src/agents/stress-tester.js'
+import {
+  HIERARCHY_CONTENT_SYSTEM_PROMPT,
+  SEQUENCE_CONTENT_SYSTEM_PROMPT,
+} from '../src/agents/template-content.js'
 
 const PROMPTS: Array<{ name: string; prompt: string }> = [
   { name: 'expander-system-prompt', prompt: EXPANDER_SYSTEM_PROMPT },
@@ -22,6 +27,9 @@ const PROMPTS: Array<{ name: string; prompt: string }> = [
   { name: 'outer-subconscious-system-prompt', prompt: OUTER_SUBCONSCIOUS_SYSTEM_PROMPT },
   { name: 'attunement-system-prompt', prompt: ATTUNEMENT_SYSTEM_PROMPT },
   { name: 'judge-system-prompt', prompt: JUDGE_SYSTEM_PROMPT },
+  { name: 'jev-system-prompt', prompt: JEV_SYSTEM_PROMPT },
+  { name: 'hierarchy-content-system-prompt', prompt: HIERARCHY_CONTENT_SYSTEM_PROMPT },
+  { name: 'sequence-content-system-prompt', prompt: SEQUENCE_CONTENT_SYSTEM_PROMPT },
 ]
 
 async function main() {
