@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-07-19
-verified-against: frontend-contract-holes (server-side marker split, enriched done, hold-open SSE, ghost.accepted)
+last-verified: 2026-10-16
+verified-against: pivot — Intervention Spectrum removed (waiting/offer/withdraw gone from RedisMessage)
 stale-after-days: 30
 ---
 
@@ -8,9 +8,6 @@ stale-after-days: 30
 
 > **Load this when:** Working on ghost node streaming, SSE endpoint, Upstash Redis pub/sub, spawn descriptor, ghost status updates, or Rejection Insights UI flow.
 >
-> **See also:** `.ai/context/intervention-layer/07-streaming-protocol.md` — the
-> intervention layer generalised this channel; the `waiting`/`offer`/`withdraw`
-> messages and the decide→wait→generate handshake live there.
 
 ---
 
@@ -105,9 +102,6 @@ type SpawnDescriptor = {
 
 ```typescript
 type RedisMessage =
-  | { type: 'waiting';  offer: InterventionOffer; timer_ms: number }  // mature + parked — starts the FE timer
-  | { type: 'offer';    offer: InterventionOffer }                    // low-intensity show (glow / sidebar card)
-  | { type: 'withdraw'; offer_id: string }                           // supersede / no-longer-mature
   | { type: 'spawn';     descriptor: SpawnDescriptor }
   | { type: 'chunk';     target: string; data: string }              // target = ghost_id
   | { type: 'node_type'; target: string; node_type: ContextNodeType } // server-split [NODE_TYPE:] — target = context ghost id
@@ -117,12 +111,11 @@ type RedisMessage =
       context_ghost_id: string; question_ghost_id: string | null }   // disambiguate WHICH pair finished
 ```
 
-`spawn`/`chunk`/`node_type`/`done` are the **maximal** rung (a full ghost pair
-streaming in); `waiting`/`offer`/`withdraw` are the quieter rungs added by the
-intervention layer. `stream.ts` forwards every type verbatim and only
-special-cases `ping` (keepalive) — it no longer special-cases `done` (the
-connection is hold-open now; see below). Full detail:
-`.ai/context/intervention-layer/07-streaming-protocol.md`.
+These four are the whole stream: a ghost pair streaming in. (`waiting`/`offer`/
+`withdraw` existed while the Intervention Spectrum did and were removed with it.)
+`stream.ts` forwards every type verbatim and only special-cases `ping`
+(keepalive) — it no longer special-cases `done` (the connection is hold-open now;
+see below).
 
 `node_type` and the enriched `done` were added by the **frontend-contract-holes**
 story (server-side marker split + `done` attribution). The FE no longer parses
@@ -143,15 +136,12 @@ plain `data:` events — no `event:`/`id:` fields.
 promise that settles **only** on client abort (`stream.onAbort`) or a
 `writeSSE` rejection (real disconnect/backpressure). `done` is forwarded like
 any other message and does **not** close the connection. One session = one
-long-lived subscription for every generation (and every parked offer) the
-session produces. Consequences:
+long-lived subscription for every generation the session produces. Consequences:
 
 - No reconnect between generations — nothing is lost to a reconnect window.
 - Two concurrent generations on one session both complete on the same
   connection; the enriched `done` (`context_ghost_id`/`question_ghost_id`)
   disambiguates which pair finished.
-- A parked intervention offer (up to a 10-minute wait) survives an unrelated
-  pipeline's `done` on the same channel.
 
 The `cleanup()` guard (`clearInterval(ping)` + `sub.unsubscribe()`) still runs
 exactly once via the `settled` flag. This hold-open behaviour was landed by the
@@ -286,8 +276,7 @@ const responseText = await step.run('stream-context', async () => {
 
 // Step 8 ('finalize'): appendMessage(ghost_pair, pair_status:'pending') FIRST,
 // derive turn_index by matching context_ghost_id, THEN publishDone LAST with the
-// attribution payload. The offer publish (agent-pipeline only) also lands before
-// done. Persist-before-done means a FE reading the turn off `done` never races an
+// attribution payload. Persist-before-done means a FE reading the turn off `done` never races an
 // unpersisted turn (FRONTEND-CONTRACT.md §7.2). A failed append aborts BEFORE done.
 ```
 

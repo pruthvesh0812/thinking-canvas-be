@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-20
-verified-against: Langfuse observability wired via @mastra/observability + @mastra/langfuse (src/mastra.ts)
+last-verified: 2026-10-16
+verified-against: pivot — context-capture tables added to the table summary (Langfuse wiring unchanged)
 stale-after-days: 30
 ---
 
@@ -147,14 +147,17 @@ service, not deployed from this repo.
 |---|---|---|
 | `canvases` | user_id | Permanent. `original_intent` immutable via RLS. |
 | `sessions` | canvas_id | Episodic run. `node_sequence` = this session only. |
-| `nodes` | canvas_id + session_id | Belongs to canvas, created in session. |
-| `edges` | canvas_id + session_id | `both_existing` flag triggers Articulator. |
+| `nodes` | canvas_id + session_id | Belongs to canvas, created in session. `seq` = the stable n1, n2… number the user sees. |
+| `edges` | canvas_id + session_id | `both_existing` flag triggers Articulator. `label` = optional text typed on the edge. |
 | `agent_threads` | canvas_id | Per-canvas. Accumulates across sessions. |
 | `attunement_state` | canvas_id + session_id | Per node creation event. |
 | `rejection_insights` | canvas_id + session_id + thread_id | Active constraints. |
 | `ai_contributions` | canvas_id + session_id | Audit log. |
 | `session_learnings` | canvas_id + session_id | Unresolved threads carried forward. |
 | `subscriptions` | user_id | Stripe sync. |
+| `context_entries` | canvas_id (+ session_id) | A note the user attached — typed now, spoken/attached later. Frontend-written. See `CONTEXT-CAPTURE.md`. |
+| `context_links` | entry_id | One entry → many targets (node / edge / the canvas). |
+| `component_removal_reasons` | canvas_id (+ session_id) | "Why remove this?" answers, keyed to the deleted component's id (no FK). |
 
 ---
 

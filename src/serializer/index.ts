@@ -1,6 +1,6 @@
 import { classifyTiers, type Tier } from './tiers.js'
 import { SERIALIZATION_RULES, type TieredSerializationRule, type CanvasMapRule } from './rules.js'
-import { buildRejectionBlock, buildFullRejectionBlock } from './rejection.js'
+import { buildRejectionBlock } from './rejection.js'
 import { getAllByCanvas, getAllByCanvasWithContent, getRecentNodes } from '../db/nodes.js'
 import { getEdgesByCanvas } from '../db/edges.js'
 import { getStructuresByCanvas, getEdgesByStructures } from '../db/observer-structures.js'
@@ -12,7 +12,7 @@ import type {
   ThreadMessage,
   Node,
   CanvasMapNode,
-  JudgeMapNode,
+  ContentMapNode,
   Edge,
   GhostStatus,
   ObserverStructure,
@@ -182,9 +182,9 @@ function formatTier1(
   msg: UserCanvasMsg,
   assistantMsg: GhostPairMsg | null,
   seq: number,
-  node: JudgeMapNode | undefined,
+  node: ContentMapNode | undefined,
   edges: Edge[],
-  nodeMap: Map<string, JudgeMapNode>,
+  nodeMap: Map<string, ContentMapNode>,
   seqMap: Map<string, number>,
   rule: TieredSerializationRule,
   pendingNodeCount: number,
@@ -244,9 +244,9 @@ function formatTier2(
   msg: UserCanvasMsg,
   assistantMsg: GhostPairMsg | null,
   seq: number,
-  node: JudgeMapNode | undefined,
+  node: ContentMapNode | undefined,
   edges: Edge[],
-  nodeMap: Map<string, JudgeMapNode>,
+  nodeMap: Map<string, ContentMapNode>,
   seqMap: Map<string, number>,
   rule: TieredSerializationRule,
 ): string {
@@ -297,9 +297,9 @@ function formatTier3(
   msg: UserCanvasMsg,
   assistantMsg: GhostPairMsg | null,
   seq: number,
-  node: JudgeMapNode | undefined,
+  node: ContentMapNode | undefined,
   edges: Edge[],
-  nodeMap: Map<string, JudgeMapNode>,
+  nodeMap: Map<string, ContentMapNode>,
   seqMap: Map<string, number>,
   rule: TieredSerializationRule,
 ): string {
@@ -344,7 +344,7 @@ type Tier4Item = {
   msg: UserCanvasMsg
   assistantMsg: GhostPairMsg | null
   seq: number
-  node: JudgeMapNode | undefined
+  node: ContentMapNode | undefined
   edges: Edge[]
   seqMap: Map<string, number>
 }
@@ -394,13 +394,10 @@ function formatTier4Group(items: Tier4Item[]): string {
 // connections. Source of truth is the nodes/edges tables directly — independent
 // of any thread's message log — so the Observer's view of the canvas can never
 // miss a branch a thread happened not to record.
-// contentMode: 'summary' is the Observer's rule; 'full' is the judge's — maturity
-// preconditions live in the wording of nodes, which summaries lose (DESIGN §4b).
 function canvasMapBlock(
-  allNodes: Array<CanvasMapNode & Partial<Pick<Node, 'content'>>>,
+  allNodes: CanvasMapNode[],
   edges: Edge[],
   seqMap: Map<string, number>,
-  contentMode: 'summary' | 'full' = 'summary',
 ): string {
   // Step 1 — Index nodes by ID (for formatEdgeLines' lookups), pre-index edges
   // by endpoint once for the whole canvas, and group nodes by session,
@@ -416,18 +413,12 @@ function canvasMapBlock(
 
   // Step 2 — One sub-header per session, then every node in that session at the
   // caller's content depth, plus its edges.
-  const header = contentMode === 'full'
-    ? 'CANVAS MAP (all sessions — full content)'
-    : 'CANVAS MAP (all sessions — summary only)'
-  const lines: string[] = [COMPRESS_DIVIDER, header]
+  const lines: string[] = [COMPRESS_DIVIDER, 'CANVAS MAP (all sessions — summary only)']
   for (const [sessionId, nodes] of bySession) {
     lines.push(`─── session ${sessionId.slice(0, 8)} ───`)
     for (const n of nodes) {
       lines.push(`[seq:${seqMap.get(n.id)} | ${n.id} | ${n.direction_marker ?? '?'}]`)
-      const text = contentMode === 'full'
-        ? (n.content ?? n.summary ?? '(empty node)')
-        : (n.summary ?? '(no summary yet)')
-      lines.push(`  "${text}"`)
+      lines.push(`  "${n.summary ?? '(no summary yet)'}"`)
       for (const line of formatEdgeLines(incoming.get(n.id) ?? [], outgoing.get(n.id) ?? [], nodeMap, seqMap)) {
         lines.push(`  ${line}`)
       }
@@ -525,51 +516,15 @@ async function serializeCanvasMap(
   return parts.join('\n\n')
 }
 
-// ─── Judge context (maturity + routing — not an AgentRole, no thread) ────────
-
-// Builds the judge's full context: north star → the FULL active rejection-insight
-// set (both categories — dedup, never re-offer a refusal) → the canvas map with
-// COMPLETE node content → current focus. The judge has no thread and no recency
-// tiers: its judgment is one call over the whole canvas (DESIGN §4b), and the
-// preconditions it checks live in the exact wording of nodes.
-export async function serializeJudgeContext(
-  canvas: Canvas,
-  triggerNodeId?: string,
-): Promise<string> {
-  logger.info('[serializer:index] judge context start', { canvas_id: canvas.id })
-
-  // Step 1 — Fetch everything in parallel, straight from source tables.
-  const [allNodes, edges, recentNodes, rejectionBlock] = await Promise.all([
-    getAllByCanvasWithContent(canvas.id),
-    getEdgesByCanvas(canvas.id),
-    getRecentNodes(canvas.id, 5),
-    buildFullRejectionBlock(canvas.id),
-  ])
-
-  // Step 2 — seq numbers are this canvas's full node order (1-based), shared by
-  // the CANVAS MAP and CURRENT FOCUS blocks below.
-  const seqMap = new Map<string, number>()
-  allNodes.forEach((n, i) => seqMap.set(n.id, i + 1))
-
-  // Step 3 — Assemble: anchor → refusals → full-content map → recency pointer.
-  const parts: string[] = [northStarBlock(canvas)]
-  if (rejectionBlock) parts.push(rejectionBlock)
-  parts.push(canvasMapBlock(allNodes, edges, seqMap, 'full'))
-  parts.push(currentFocusBlock(recentNodes, seqMap, triggerNodeId))
-
-  logger.info('[serializer:index] judge context done', { canvas_id: canvas.id, node_count: allNodes.length })
-  return parts.join('\n\n')
-}
-
 // ─── Thread-type strategies (stateless / canvas-stateful tiering) ───────────
 
 // Looks up the seq number and Node row for a canvas_event message's node_id —
 // shared by serializeStateless and serializeTiered so both derive it the same way.
 function resolveMsgContext(
   msg: UserCanvasMsg,
-  nodeMap: Map<string, JudgeMapNode>,
+  nodeMap: Map<string, ContentMapNode>,
   seqMap: Map<string, number>,
-): { seq: number; node: JudgeMapNode | undefined } {
+): { seq: number; node: ContentMapNode | undefined } {
   const nodeId = 'node_id' in msg ? msg.node_id : undefined
   const seq = nodeId ? (seqMap.get(nodeId) ?? 0) : 0
   const node = nodeId ? nodeMap.get(nodeId) : undefined
@@ -582,7 +537,7 @@ function resolveMsgContext(
 function serializeStateless(
   thread: AgentThread,
   rule: TieredSerializationRule,
-  nodeMap: Map<string, JudgeMapNode>,
+  nodeMap: Map<string, ContentMapNode>,
   seqMap: Map<string, number>,
   edges: Edge[],
 ): string {
@@ -606,7 +561,7 @@ function serializeStateless(
 function serializeTiered(
   thread: AgentThread,
   rule: TieredSerializationRule,
-  nodeMap: Map<string, JudgeMapNode>,
+  nodeMap: Map<string, ContentMapNode>,
   seqMap: Map<string, number>,
   edges: Edge[],
   tierMap: Map<string, Tier>,
@@ -709,11 +664,11 @@ export async function serialize(
   ])
 
   // Step 2 — Build lookup maps used by every formatter.
-  // nodeMap: node_id → JudgeMapNode (summary + marker + content), canvas-wide.
+  // nodeMap: node_id → ContentMapNode (summary + marker + content), canvas-wide.
   // seqMap: node_id → 1-based position in THIS agent's own thread — a node that
   // never triggered a turn for this agent legitimately has no such position and
   // renders seq:? in edge lines; that's expected, not a bug.
-  const nodeMap = new Map<string, JudgeMapNode>(allNodes.map(n => [n.id, n]))
+  const nodeMap = new Map<string, ContentMapNode>(allNodes.map(n => [n.id, n]))
 
   const seqMap = new Map<string, number>()
   let seqCounter = 0

@@ -26,9 +26,9 @@ Receives canvas events from the frontend, runs the AI agent pipeline, and stream
 | Task | Load these files |
 |---|---|
 | Any agent work (create/modify/debug) | `CORE-CONCEPTS.md` + `AGENT-PIPELINE.md` |
-| Intervention — judge, offers, decide→wait→generate, show ruleset, receptivity, Impact Check | `.ai/context/intervention-layer/README.md` (+ the numbered sub-file) |
+| Context capture — notes, links, node sequence numbers, edge labels, removal reasons | `CONTEXT-CAPTURE.md` + `DATABASE-SCHEMA.md` |
 | Serialization / thread / context window | `CORE-CONCEPTS.md` + `SERIALIZATION.md` |
-| Ghost streaming / SSE / Redis / spawn flag | `CANVAS-SYNC.md` + `.ai/context/intervention-layer/07-streaming-protocol.md` |
+| Ghost streaming / SSE / Redis / spawn flag | `CANVAS-SYNC.md` |
 | Rejection Insights Engine | `AGENT-PIPELINE.md` + `CANVAS-SYNC.md` |
 | Multi-Canvas / session model | `CORE-CONCEPTS.md` + `ARCHITECTURE.md` |
 | Database / schema / migrations | `DATABASE-SCHEMA.md` + `CORE-CONCEPTS.md` |
@@ -56,8 +56,7 @@ thinking-canvas-api/
 │   │   ├── observer.ts
 │   │   ├── outer-subconscious.ts
 │   │   ├── articulator.ts
-│   │   ├── attunement.ts
-│   │   └── orchestrator.ts
+│   │   └── attunement.ts
 │   ├── tools/              # Cursor tools
 │   │   ├── get-content.ts
 │   │   ├── get-window.ts
@@ -68,7 +67,6 @@ thinking-canvas-api/
 │   │   ├── get-branch.ts
 │   │   └── semantic-promote.ts
 │   ├── pipeline/           # Inngest functions
-│   │   ├── agent-pipeline.ts       # debounced main pipeline
 │   │   ├── articulator-pipeline.ts # immediate on existing-node edge
 │   │   ├── outer-sub-pipeline.ts   # immediate on question edge
 │   │   ├── rejection-insights.ts   # immediate on ghost rejection
@@ -145,7 +143,7 @@ thinking-canvas-api/
 | Layer | Pattern | Example |
 |---|---|---|
 | Mastra agents | camelCase + Agent | `expanderAgent`, `observerAgent` |
-| Inngest functions | kebab-case | `agent-pipeline`, `rejection-insights` |
+| Inngest functions | kebab-case | `articulator-pipeline`, `rejection-insights` |
 | Cursor tools | snake_case | `get_content`, `semantic_promote` |
 | Supabase tables | snake_case plural | `canvases`, `sessions`, `nodes`, `rejection_insights` |
 | TypeScript types | PascalCase | `Canvas`, `Session`, `NodeDelta`, `SpawnDescriptor` |
@@ -161,15 +159,15 @@ thinking-canvas-api/
 
 ## Non-Negotiables (every task)
 
-1. `canAgentFire()` before every judge route — never skip (the judge replaced the Orchestrator; `src/agents/orchestrator.ts` now exports `runJudge`)
-2. Tier enforcement in the judge — server-side only, and never substitute a weaker agent (tier-locked best → upgrade offer, see intervention-layer)
+1. `canAgentFire()` before every agent run — never skip
+2. Tier enforcement — server-side only, never trust client claims
 3. `canvases.original_intent` written once — never updated
 4. Agent system prompts are constants — never built from user input
 5. Agent threads are per-canvas (`canvas_id`) — never per-session
 6. Shared types in `types/index.ts` — never duplicate
 7. RLS on every Supabase table
 8. No Supabase Realtime — backend never pushes unsolicited state to frontend
-9. Redis pub/sub = intervention signals (`waiting`/`offer`/`withdraw`/`spawn`/`chunk`/`done`) — the ghost stream is the maximal form; still no canvas *state* over Redis
+9. Redis pub/sub = the ghost stream only (`spawn`/`node_type`/`chunk`/`done`) — no canvas *state* over Redis
 10. Load active rejection_insights before every agent call — inject as NEGATIVE CONSTRAINTS
 11. Ghost structure (nodes + edges) defined by frontend from spawn descriptor — agent generates content only
 12. Never import `@ai-sdk/google` outside `src/lib/llm.ts` — all model instantiation centralised there (see `LLM-LAYER.md`)
@@ -219,11 +217,24 @@ started** — `FRONTEND-CONTRACT.md` is its build-against contract.
 
 | Item | Where the design lives |
 |---|---|
-| Intervention Spectrum (judge, offers, `waiting`/`offer`/`withdraw` messages, phase latch) | `.ai/features/intervention-spectrum/` — status: draft |
 | Observer structure writes + per-edge accept/reject (`observer_structures`/`observer_edges` rows, `POST /api/observer-edge-status`) | Tables + Zod schema exist; no pipeline writes, no route |
 | Branching | `.ai/features/branching/story.md` — deferred |
 | Session branching (fork new sessions from a closed session) | `.ai/features/session-branching/story.md` — deferred |
-| `ignored` ghost status, velocity-adaptive debounce, phase transition (`updatePhase` uncalled), `carry_forward_ids` handling | Referenced in context docs; see `FRONTEND-CONTRACT.md` §10–11 |
+| Anything that makes agents run on node creation (Expander / Stress-Tester have no caller), plus how agents consume context notes | Pending the agent redesign — see **Pivot** below |
+| `ignored` ghost status, `updatePhase` (uncalled), `carry_forward_ids` handling | Referenced in context docs; see `FRONTEND-CONTRACT.md` §10–11 |
+
+**Pivot (2026-10-16) — text-only context capture.** The **Intervention Spectrum
+was removed** (judge, offers, consent timer, `waiting`/`offer`/`withdraw`,
+Impact Check, receptivity, `canvas_version`/`latest_seq`) — it is no longer part
+of the product, as of now. Its design record is kept, shelved, in
+`.ai/features/intervention-spectrum/`; the code is in git history before the
+`feature/pivot-text-context-capture-2026-10-16T1703` branch. In its place the
+backend gained the context-capture schema (`context_entries`, `context_links`,
+`component_removal_reasons`, `nodes.seq`, `edges.label`) — see
+`CONTEXT-CAPTURE.md`. What still runs: the explicit-edge agents (Articulator,
+Outer Subconscious), Session Complete (Observer), ghost streaming and Rejection
+Insights. The next piece of work is redefining how agents are driven and how they
+read notes.
 
 > **Note:** `.ai/features/sdk-delivery-filter/` is from a different project (Spring Boot / help-center-v2). Ignore it.
 

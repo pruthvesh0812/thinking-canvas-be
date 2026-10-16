@@ -81,18 +81,6 @@ export async function buildRejectionBlock(canvas_id: string, agentRole: AgentRol
   return blocks.join('\n\n')
 }
 
-// The judge dedups candidate moves against the FULL active insight set — never
-// re-offer a refusal (DESIGN §4b). Both categories apply: content NEGATIVE
-// CONSTRAINTS, and connection feedback too (an Articulator offer that names a
-// connection the user already rejected between the same two nodes is a re-offer).
-export async function buildFullRejectionBlock(canvas_id: string): Promise<string> {
-  const insights = await getActiveByCanvas(canvas_id)
-  if (insights.length === 0) return ''
-
-  const { content, connection } = buildCategoryBlocks(insights)
-  return [content, connection].filter((b): b is string => b !== null).join('\n\n')
-}
-
 // Renders each insight category into its prompt block (null when the category is
 // empty). Callers decide which categories their agent may see.
 function buildCategoryBlocks(insights: RejectionInsight[]): {

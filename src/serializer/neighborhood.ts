@@ -1,6 +1,6 @@
 import { getAllByCanvasWithContent } from '../db/nodes.js'
 import { getEdgesByCanvas } from '../db/edges.js'
-import type { JudgeMapNode, Edge } from '../../types/index.js'
+import type { ContentMapNode, Edge } from '../../types/index.js'
 
 // ─────────────────────────────────────────────────────────────────────────
 // NEIGHBOURHOOD — the local subgraph around the endpoints of a newly drawn
@@ -69,7 +69,7 @@ function siblingsOf(nodeId: string, adj: Adjacency): string[] {
   return [...out]
 }
 
-function renderNode(node: JudgeMapNode | undefined, id: string, relation: string): string {
+function renderNode(node: ContentMapNode | undefined, id: string, relation: string): string {
   if (!node) return `  [${id.slice(0, 8)} | ${relation}] (node not found)`
   const marker = node.direction_marker ?? '?'
   const text = node.content?.trim() || node.summary || '(empty node)'

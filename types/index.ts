@@ -73,7 +73,7 @@ export type Canvas = {
   user_id: string
   title: string
   original_intent: string   // immutable after creation
-  canvas_version: number    // context fingerprint — bumped by DB trigger on nodes/edges (§6)
+  next_node_seq: number     // monotonic counter behind nodes.seq — never decremented, so numbers are never reused
   created_at: string
 }
 
@@ -83,9 +83,6 @@ export type Session = {
   status: 'active' | 'closed'
   current_phase: SessionPhase
   node_sequence: string[]   // ordered node IDs created in THIS session only
-  latest_seq: number        // monotonic version guard — latest intervention seq (§4e)
-  receptivity: number             // decayed offer-response aggregate, [0,1] (§8) — timing signal, never content
-  receptivity_updated_at: string  // last write, for the decay-toward-neutral calc
   start_time: string
   end_time: string | null
 }
@@ -95,6 +92,11 @@ export type Node = {
   canvas_id: string
   session_id: string
   owner: 'human' | 'ai'
+  // The stable number the user sees on the node (n1, n2, …). DB-assigned by a
+  // BEFORE INSERT trigger — the frontend never writes it. Unique per canvas, in
+  // creation order, never reused or renumbered (even after the node is deleted).
+  // Not the serializer's `seq:N`, which is a prompt-text label.
+  seq: number
   content: string | null
   summary: string | null            // gemini-2.5-flash directional summary
   direction_marker: DirectionMarker | null
@@ -121,10 +123,9 @@ export type Node = {
 // match, instead of over-fetching every column for every node on the canvas.
 export type CanvasMapNode = Pick<Node, 'id' | 'session_id' | 'summary' | 'direction_marker'>
 
-// The judge reads the canvas map with COMPLETE content — maturity preconditions
-// live in the wording of nodes, which summaries lose (DESIGN §4b). Still excludes
-// the embedding column, which no map ever renders.
-export type JudgeMapNode = CanvasMapNode & Pick<Node, 'content'>
+// A node with its COMPLETE content, for readers that need the wording summaries
+// lose. Still excludes the embedding column, which no map ever renders.
+export type ContentMapNode = CanvasMapNode & Pick<Node, 'content'>
 
 export type Edge = {
   id: string
@@ -140,6 +141,62 @@ export type Edge = {
   // Nullable to keep pre-migration edges valid.
   from_handle: EdgeHandle | null
   to_handle: EdgeHandle | null
+  // Short label the user typed on the edge itself (≤200 chars). That is the
+  // edge, not a note. Frontend-written; NULL = unlabelled.
+  label: string | null
+  created_at: string
+}
+
+// ─────────────────────────────────────────────
+// Context capture — notes the user attaches to a node, an edge, or the canvas
+// ─────────────────────────────────────────────
+// Frontend-written (supabase-js + RLS), backend-read: agents see entries live at
+// serialize time. One shape for typed, spoken and (later) attached context.
+// An entry is visible only through an ACTIVE link and while deleted_at is NULL.
+
+export type ContextSource = 'typed' | 'spoken' | 'attachment'
+
+// 'canvas' = background ("Canvas context", target_id NULL). 'group' is reserved for v2.
+export type ContextTargetKind = 'canvas' | 'node' | 'edge'
+
+// How the link came to exist: picked directly, moved by the user, or set by an
+// @n / #text / /all shortcut.
+export type ContextLinkOrigin = 'user_chosen' | 'user_moved' | 'shortcut'
+
+// 'deleted' = the user removed the link, or its node/edge row was deleted (DB trigger).
+export type ContextLinkState = 'active' | 'deleted'
+
+export type ContextEntry = {
+  id: string                       // client-generated
+  canvas_id: string
+  session_id: string | null
+  content: string                  // plain text; never rewritten by the system
+  source: ContextSource
+  author_id: string | null         // v1 = the canvas owner
+  created_at: string
+  updated_at: string               // bumped by DB trigger on every UPDATE
+  deleted_at: string | null        // soft delete — undo clears it; agents never see a row with this set
+}
+
+export type ContextLink = {
+  id: string                       // client-generated
+  entry_id: string
+  target_kind: ContextTargetKind
+  target_id: string | null         // NULL ⇔ target_kind === 'canvas'; no FK (polymorphic)
+  origin: ContextLinkOrigin
+  state: ContextLinkState
+  created_at: string
+}
+
+// "Why remove this?" answer, stored against the DELETED component's kind + id —
+// never on a surviving component. No FK: the component no longer exists.
+export type ComponentRemovalReason = {
+  id: string
+  canvas_id: string
+  session_id: string | null
+  target_kind: 'node' | 'edge'
+  target_id: string
+  reason: string
   created_at: string
 }
 
@@ -320,38 +377,7 @@ export type SpawnDescriptor = {
   }
 }
 
-// ─────────────────────────────────────────────
-// Intervention Spectrum — offer lifecycle (§4f)
-// ─────────────────────────────────────────────
-// The persisted handle for the decide → wait → generate handshake. The judge returns a
-// decision; the pipeline builds + persists an offer from it. Ephemeral — durable through
-// the active flow, then purged (session close + TTL). No retention guarantee.
-
-export type InterventionStatus =
-  | 'waiting' | 'shown' | 'pulled' | 'dismissed' | 'superseded' | 'expired'
-
-export type InterventionDirectness = 'direct' | 'subtle'
-
-export type InterventionOffer = {
-  id: string
-  canvas_id: string
-  session_id: string
-  agent_role: AgentRole
-  trigger_node_id: string
-  anchor_node_ids: string[]
-  seq: number                                 // per-session; vs sessions.latest_seq
-  context_fingerprint: string                 // change-detector, NOT content (§6)
-  directness: InterventionDirectness | null   // set at show
-  headline: string | null                     // set at show (backend-authored)
-  status: InterventionStatus
-  created_at: string
-  resolved_at: string | null
-}
-
 export type RedisMessage =
-  | { type: 'waiting'; offer: InterventionOffer; timer_ms: number }  // "mature + pipeline waiting" — starts the timer (§4d); timer_ms is receptivity-tuned (§8)
-  | { type: 'offer'; offer: InterventionOffer }      // low-intensity show — glow / sidebar card (§5)
-  | { type: 'withdraw'; offer_id: string }           // supersede / no-longer-mature (§4e)
   | { type: 'spawn'; descriptor: SpawnDescriptor }
   | { type: 'chunk'; target: string; data: string }  // target = ghost_id
   // Server-side marker split: the token layer strips the agent's [NODE_TYPE: x]
@@ -411,14 +437,9 @@ export type Subscription = {
 
 // POST /api/canvas-event
 // ORDERING CONTRACT: the frontend writes the row to Supabase first, then POSTs
-// here with the id. The backend always reads post-mutation state — the
-// fingerprint DB trigger has already fired and bumped canvas_version.
-// This applies equally to creates, updates, deletes, and re-parents
-// (edge.deleted + edge.created).
-//
-// Cross-repo dependency: the frontend must persist ALL mutations to Supabase —
-// not just creates. A delete the FE never wrote is invisible to the fingerprint
-// and to the judge's canvas-map read (DESIGN §4g).
+// here with the id. The backend always reads post-mutation state. Only
+// node.created / node.updated / edge.created / ghost.accepted cause work; the
+// delete / set-aside events are acknowledged and otherwise ignored.
 export const canvasEventSchema = z
   .object({
     canvas_id: z.string().uuid(),

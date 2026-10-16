@@ -160,63 +160,24 @@ canvasEventRoute.post('/canvas-event', async (c) => {
       return c.json({ ok: true })
     }
 
-    if (event_type === 'node.deleted') {
-      const node_id = parsed.data.node_id!
-      // The FE already deleted the row from Supabase before notifying us.
-      // The fingerprint trigger bumped canvas_version on that DELETE. Fire the
-      // impact event so task-07 can classify whether an in-flight offer was
-      // anchored to the now-vanished node and warn/re-trigger accordingly.
-      await inngest.send({
-        name: 'canvas/intervention.impact',
-        data: { canvas_id, session_id, deleted_node_id: node_id },
+    // Mutation notifications nothing reacts to. They are acknowledged (200) so a
+    // frontend that sends them keeps working, but the rows are already the truth:
+    // the FE wrote the delete / set_aside_at change to Supabase first, and every
+    // reasoning read filters live (db/nodes.ts, db/edges.ts, cursor tools,
+    // match_nodes — see CORE-CONCEPTS.md → set aside).
+    if (
+      event_type === 'node.deleted' ||
+      event_type === 'edge.deleted' ||
+      event_type === 'node.set_aside' ||
+      event_type === 'node.restored'
+    ) {
+      logger.info('[route:canvas-event] mutation acknowledged — no reaction', {
+        canvas_id,
+        session_id,
+        event_type,
+        node_id: parsed.data.node_id,
+        edge_id: parsed.data.edge_id,
       })
-      logger.info('[route:canvas-event] node.deleted — impact event fired', { canvas_id, session_id, node_id })
-      return c.json({ ok: true })
-    }
-
-    if (event_type === 'edge.deleted') {
-      const edge_id = parsed.data.edge_id!
-      // Edge deletes include re-parents (edge.deleted + edge.created in the FE).
-      // The fingerprint trigger has already bumped canvas_version. Fire impact
-      // so task-07 can check whether any in-flight offer was anchored via this edge.
-      await inngest.send({
-        name: 'canvas/intervention.impact',
-        data: { canvas_id, session_id, deleted_edge_id: edge_id },
-      })
-      logger.info('[route:canvas-event] edge.deleted — impact event fired', { canvas_id, session_id, edge_id })
-      return c.json({ ok: true })
-    }
-
-    if (event_type === 'node.set_aside') {
-      const node_id = parsed.data.node_id!
-      // The FE already wrote set_aside_at directly to Supabase (§3) — the
-      // fingerprint trigger fires on any nodes UPDATE, so canvas_version is
-      // already bumped. Every reasoning read filters set-aside nodes live
-      // (db/nodes.ts, db/edges.ts, cursor tools, match_nodes — see
-      // CORE-CONCEPTS.md → set aside), so the next agent run is automatically
-      // correct with no further action needed here.
-      //
-      // The one thing that ISN'T automatically correct: an offer already
-      // generated/waiting/shown for THIS session may be anchored to the node
-      // that just vanished from reasoning. Reuse the impact pipeline (same
-      // one node.deleted fires) to warn it in place — a set-aside node is,
-      // from the intervention system's perspective, indistinguishable from a
-      // deleted one.
-      await inngest.send({
-        name: 'canvas/intervention.impact',
-        data: { canvas_id, session_id, deleted_node_id: node_id },
-      })
-      logger.info('[route:canvas-event] node.set_aside — impact event fired', { canvas_id, session_id, node_id })
-      return c.json({ ok: true })
-    }
-
-    if (event_type === 'node.restored') {
-      // Symmetric inverse of node.set_aside — the FE already cleared
-      // set_aside_at, so the node is back in reasoning on the next agent run
-      // via the same live filters. A restore only adds information back, it
-      // never invalidates an in-flight offer, so there is nothing to warn.
-      const node_id = parsed.data.node_id!
-      logger.info('[route:canvas-event] node.restored', { canvas_id, session_id, node_id })
       return c.json({ ok: true })
     }
 
@@ -231,8 +192,8 @@ canvasEventRoute.post('/canvas-event', async (c) => {
     //   new-node edge (one end didn't exist) → node.created (debounced), as
     //     before — the new node sits at the edge's `to` end.
     //   anything else (a logical/doubt/associative edge between two existing
-    //     nodes) → NO immediate agent. The edge is already persisted and the
-    //     fingerprint bumped; it is absorbed into the next debounced pass.
+    //     nodes) → NO immediate agent. The edge is already persisted and agents
+    //     read the canvas live, so it is picked up on their next run.
     const edge = await getEdge(parsed.data.edge_id!)
 
     if (edge.edge_type === 'question') {
@@ -264,9 +225,8 @@ canvasEventRoute.post('/canvas-event', async (c) => {
       logger.info('[route:canvas-event] new-node edge → node.created', { canvas_id, session_id, edge_id: edge.id })
     } else {
       // A structural edge (logical / doubt / associative) between two existing
-      // nodes: no immediate agent. The FE has already written it and the
-      // fingerprint trigger bumped canvas_version, so the next debounced/judge
-      // pass sees the new topology on its own.
+      // nodes: no immediate agent. The FE has already written it, so the next
+      // agent run sees the new topology on its own.
       logger.info('[route:canvas-event] structural edge — no immediate trigger', {
         canvas_id, session_id, edge_id: edge.id, edge_type: edge.edge_type,
       })

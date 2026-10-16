@@ -2,9 +2,16 @@
 feature: "intervention-spectrum"
 type: story
 created: 2026-06-29
-status: draft
+status: shelved — removed 2026-10-16 (pivot); design record only
 git_branch: "claude/ai-intervention-spectrum-moumhu"
 ---
+
+> **SHELVED — removed from the product 2026-10-16 (pivot to text-only context
+> capture).** The code, migrations' effects and context docs for this feature were
+> removed on branch `feature/pivot-text-context-capture-2026-10-16T1703`; the last
+> commit containing them is that branch's parent (`cbda6d9`). This file is kept as
+> the design record in case a consent/maturity layer returns — it describes
+> something that does **not** exist in the code. Don't build against it.
 
 > **Model authority:** [`DESIGN.md`](./DESIGN.md) — the full flow, the 24-action
 > matrix, the judge/phase/concurrency foundation, and the decisions log. This file

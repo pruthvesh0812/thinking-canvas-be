@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-07-19
-verified-against: src/routes/* · src/pipeline/* · src/streaming/* · src/agents/* prompts · types/index.ts · supabase/migrations/* — §6/§6.1/§7.1/§7.2/§7.3/§11 updated for the frontend-contract-holes fix (server-side marker split, enriched done, hold-open SSE, ghost.accepted)
+last-verified: 2026-10-16
+verified-against: pivot branch feature/pivot-text-context-capture-2026-10-16T1703 — Intervention Spectrum removed; context-capture tables, nodes.seq and edges.label added. Sections other than 1, 3, 4, 5.1, 8 and 10 were last verified 2026-07-19 (frontend-contract-holes).
 stale-after-days: 30
 ---
 
@@ -29,6 +29,9 @@ PLANE 1 — Supabase direct (supabase-js + anon key + user JWT, RLS-scoped)
              session_learnings, subscriptions
   FE WRITES: canvases (create), nodes, edges
              (ghost accept: FE writes the accepted nodes/edges itself — §7)
+             context_entries, context_links, component_removal_reasons
+             (text-only context capture — §3.4; NO notify to the backend)
+  FE READS (also): context_entries, context_links, component_removal_reasons
 
 PLANE 2 — Backend REST API (fetch → Railway/localhost:3001, JSON, no auth today)
   POST /api/canvas-event      notify backend AFTER a Supabase write (§5.1)
@@ -71,6 +74,7 @@ notify means the node never gets a summary/embedding, never enters
 |---|---|---|
 | `id, canvas_id, session_id, owner, content, created_at` | **Frontend** | `owner`: `'human'` for user nodes, `'ai'` for accepted ghosts. `content` NULL is legal and meaningful ("empty node" = unarticulated thought). |
 | `x, y, width, height` | **Frontend** | Canvas layout — written on create AND on every move/resize commit, so a refetch restores the exact previous position and size. Backend never reads or writes these; agent serialization is content-oriented, not spatial. All four are nullable in the schema for backward-compatibility with pre-migration rows, but new rows should always carry them. No Plane 2 notify needed on move/resize — the backend is intentionally blind to spatial changes (they don't invalidate a fingerprint or wake an agent). |
+| `seq` | **Database** (trigger) | The stable number the user sees (n1, n2, …). Assigned on INSERT — **never send it** (a value you send is discarded). Unique per canvas, creation order, never reused or renumbered, even after the node is deleted. It arrives with every `nodes` select; after an insert, read it back with `.select('seq')`. Ghost-accepted AI nodes get one too. |
 | `summary, direction_marker, embedding` | **Backend** | Filled asynchronously after `POST /api/canvas-event` (node.created). FE must render nodes with these NULL and never write them. |
 
 ### 3.2 `edges` — the frontend computes the routing flags
@@ -83,6 +87,9 @@ correctly at insert time (the backend reads them verbatim, never recomputes):
 - `both_existing`: `true` only when BOTH endpoints already existed on the
   canvas before the edge was drawn → Articulator. A drag-out-to-new-node edge
   is `both_existing: false`.
+
+`label` (nullable text, ≤200 chars) is the short label the user types on the
+edge itself — frontend-written, no notify. That is the edge, not a note.
 
 Two additional columns are also frontend-owned, purely for restoring the
 exact visual reconnection on refetch (backend never reads them):
@@ -104,27 +111,53 @@ exact visual reconnection on refetch (backend never reads them):
 | `session_learnings` | SELECT | Observer output surfaced at next canvas open (`content`, `type: question|contradiction|empty_node`). Written by the session-complete pipeline, asynchronously after `POST /api/session/complete`. |
 | `subscriptions` | SELECT | Read `tier` + `status` for UI gating (upsell surfaces). Missing row or `status != 'active'` ⇒ treat as `free` (matches backend `getTierByUser`). Enforcement itself is server-side — the FE only mirrors it cosmetically. |
 
+### 3.4 Context capture — frontend-written, backend-read
+
+Spec: "Text-Only Context Capture — Requirements" (Oct 16, 2026); model and rules in
+`CONTEXT-CAPTURE.md`. The frontend writes three tables directly (RLS = canvas
+ownership) and sends **no** `canvas-event` for any of it — agents read the notes
+live.
+
+| Table | Frontend does |
+|---|---|
+| `context_entries` | INSERT a note (`source:'typed'`, `id` = a client-generated uuid, `content` ≤ 4000 chars — the product limit of 1,000 is the frontend's to enforce); UPDATE `content` to edit; UPDATE `deleted_at` to delete (set) or undo (clear). Never change `canvas_id` or `source` (the DB rejects it). `updated_at` is set by the DB. |
+| `context_links` | INSERT one link per target (`target_kind` `canvas`\|`node`\|`edge`; `target_id` NULL for `canvas`; `origin` `user_chosen`\|`user_moved`\|`shortcut`). A `/all` note is **one entry + N links**. Move = set the old link `state:'deleted'` and insert a new one with `origin:'user_moved'`. |
+| `component_removal_reasons` | INSERT the "Why remove this?" answer with the deleted component's kind + id. |
+
+Rules that bite:
+- **An entry is visible only through an active link** (and while `deleted_at` is
+  NULL). Insert the entry, then its links; if the second step fails, retry both
+  as upserts by id — an entry with no links is invisible to everyone.
+- **Deleting a node or edge retires its links for you** — a DB trigger sets them
+  to `state:'deleted'`. The real DELETE should come after your own undo window
+  (as it does today), because the retire is permanent.
+- Badge counts and the panel list should both come from `context_links` where
+  `state='active'` joined to non-deleted entries, so they always match.
+- Empty or whitespace-only content for `typed`/`spoken` is rejected by the DB.
+
 ---
 
 ## 4. What Triggers What — the Gesture Matrix
 
 | User gesture | FE Supabase write | FE notify (Plane 2) | Backend result |
 |---|---|---|---|
-| Create a node | `nodes` insert | `canvas-event` `node.created` | Enrich (summary+embedding) → append to `node_sequence` → **debounced 10s** agent pipeline → maybe a ghost pair (Expander/Stress-Tester) |
-| Drag edge out of a node into a NEW node | `nodes` insert + `edges` insert (`both_existing:false`) | **ONE event only:** `canvas-event` `edge.created` | Backend converts it to `node.created` for the edge's `to` node. Sending node.created AND edge.created for the same gesture double-fires the pipeline. |
-| Connect two EXISTING nodes (non-question) | `edges` insert (`both_existing:true`) | `canvas-event` `edge.created` | **Immediate** Articulator ghost (no debounce, no Orchestrator) |
+| Create a node | `nodes` insert | `canvas-event` `node.created` | Enrich (summary+embedding) → append to `node_sequence`. **No ghost follows** — nothing runs an agent on node creation any more (§10) |
+| Drag edge out of a node into a NEW node | `nodes` insert + `edges` insert (`both_existing:false`) | **ONE event only:** `canvas-event` `edge.created` | Backend converts it to `node.created` for the edge's `to` node (enrichment only — no agent runs). Don't also send `node.created` for the same gesture. |
+| Connect two EXISTING nodes (non-question) | `edges` insert (`both_existing:true`) | `canvas-event` `edge.created` | **Immediate** Articulator ghost |
 | Draw a `question` edge | `edges` insert (`edge_type:'question'`) | `canvas-event` `edge.created` | **Immediate** Outer Subconscious ghost pair |
 | Accept/reject a ghost | on accept: `nodes`/`edges` inserts (§7.3) | `ghost-status` + (on accept) `canvas-event` `ghost.accepted` | Thread turn status updated; accept → enrich AI nodes (summary/embedding/sequence) + audit; rejection → Rejection Insights engine |
 | Start a session | — | `session/start` | Session row created; boundary turn appended to threads |
 | End a session ("Session Complete") | — | `session/complete` | Observer pass → `session_learnings` rows; session closed — both async |
-| Move/delete/edit a node or edge | Supabase write | **No event type exists yet** (§10, §11) | Backend is blind to these today |
+| Edit a node's text | `nodes` upsert/update | `canvas-event` `node.updated` (optional) | Re-enriches summary + embedding |
+| Delete a node/edge · set aside / restore a node | Supabase write | `node.deleted` / `edge.deleted` / `node.set_aside` / `node.restored` (optional) | Acknowledged (`{ok:true}`), nothing else — agents read the rows live |
+| Move/resize a node, reattach an edge handle | Supabase write | None | Backend is intentionally blind to layout |
+| Save / edit / move / delete a note · type an edge label · answer "Why remove this?" | Supabase write (§3.4) | **None** | Nothing — agents read it live |
 
-**Silence is normal — design for it.** A notify frequently produces NO ghost:
-the 10s debounce collapses bursts to one run; `canAgentFire` silently drops the
-run if a ghost triggered by that node is still `pending`; the Orchestrator can
-route to a non-streamable role (dropped); free tier never routes beyond
-Expander/Articulator. The FE must never spinner-block awaiting a ghost — ghosts
-arrive opportunistically on Plane 3 or not at all.
+**Silence is normal — design for it.** Today only an edge produces a ghost
+(Articulator / Outer Subconscious), and `canAgentFire` silently drops that run if
+a ghost triggered by the same node is still `pending`. The FE must never
+spinner-block awaiting a ghost — ghosts arrive opportunistically on Plane 3 or
+not at all.
 
 ---
 
@@ -136,6 +169,8 @@ arrive opportunistically on Plane 3 or not at all.
 // node created:   { "canvas_id": uuid, "session_id": uuid, "event_type": "node.created", "node_id": uuid }
 // edge created:   { "canvas_id": uuid, "session_id": uuid, "event_type": "edge.created", "edge_id": uuid }
 // ghost accepted: { "canvas_id": uuid, "session_id": uuid, "event_type": "ghost.accepted", "node_ids": [uuid], "agent_role": "expander" }  // §7.3
+// node edited:    { "canvas_id": uuid, "session_id": uuid, "event_type": "node.updated", "node_id": uuid }   // re-enriches summary + embedding
+// acknowledged only (no reaction): "node.deleted" | "node.set_aside" | "node.restored" (with node_id) · "edge.deleted" (with edge_id)
 ```
 - Zod: `canvasEventSchema` (`types/index.ts`) — the refinement rejects a
   node.created without node_id (and vice versa), and a `ghost.accepted` without
@@ -143,6 +178,9 @@ arrive opportunistically on Plane 3 or not at all.
 - `node.created` is **synchronous and slow** (~1-3s: Gemini summary + embedding
   happen before the response). Fire-and-forget from the FE; never block the
   canvas on it.
+- The "acknowledged only" events return `{ok:true}` and do nothing else: the row
+  change is already the truth and agents read it live. Sending them is optional.
+- Context notes, edge labels and removal reasons have **no** event type — see §3.4.
 - Returns `{ok:true}` | 400 | 500.
 
 ### 5.2 `POST /api/ghost-status`
@@ -250,7 +288,7 @@ the backend defines only structure + text.
    on the one connection. (A genuine network drop still needs a reconnect — treat
    that as an error path, and reconcile ground truth from Supabase on reload.)
 3. **Concurrent generations share one channel and `done` is now attributed.** A
-   debounced Expander run and an immediate Articulator run can interleave;
+   an Articulator run and an Outer Subconscious run can interleave;
    `chunk.target` disambiguates chunks, and `done` now carries
    `context_ghost_id`/`question_ghost_id` so you know WHICH pair finished. A
    `done` from one generation no longer tears down the other — finalize the pair
@@ -338,8 +376,8 @@ reason from the RejectionReasonSelector. Nothing is written to `nodes`/`edges`.
 
 | Tier | Ghost sources actually reachable today |
 |---|---|
-| `free` | Expander (debounced) + Articulator (existing-nodes edge) — Orchestrator never routes further. **Caveat:** question edges still fire Outer Subconscious for free users (tier is not checked on that pipeline — backend inconsistency, §11). Don't advertise it; don't rely on it. |
-| `pro` / `power` | All of the above + Stress-Tester (blocked until phase transitions land — §10.3) + Observer at session complete. |
+| `free` | Articulator (`relate` edge between existing nodes). **Caveat:** question edges still fire Outer Subconscious for free users (tier is not checked on that pipeline — backend inconsistency, §11). Don't advertise it; don't rely on it. |
+| `pro` / `power` | Same ghost sources + Observer at session complete. Expander and Stress-Tester currently have no trigger (§10.2). |
 
 Enforcement is server-side only. FE gating is cosmetic (upsell UI), driven by
 the `subscriptions` read (§3.3). There is **no checkout endpoint yet** — only
@@ -375,24 +413,26 @@ against them today = building against nothing.
    /api/observer-edge-status` is not a route**. Today the Observer's output
    surfaces only as flat `session_learnings` rows. Build the learnings review
    list for v1; the structure UX comes with its feature.
-2. **Intervention Spectrum** (`.ai/features/intervention-spectrum/DESIGN.md`,
-   status: draft). Will change this contract materially: new stream message
-   types (`waiting`/`offer`/`withdraw`), a FE-side trigger ruleset + processing
-   timer + glow/sidebar surfaces, ghosts keyed by `(anchor_node_id, seq)`, and
-   the FE persisting ALL mutations (delete/edit/move) with new canvas-event
-   types. Design the FE event bus + stream-message handling to be
-   extensible for unknown `type` values (ignore-unknown, don't throw).
+2. **A node-triggered agent.** The Intervention Spectrum (judge, offers, consent
+   timer, `waiting`/`offer`/`withdraw`) was **removed** (2026-10-16 pivot) and the
+   debounced `node.created` pipeline it replaced is not in the code either.
+   Nothing generates a ghost from creating a node, so Expander/Stress-Tester
+   ghosts do not arrive. How agents are driven next is undecided — don't build a
+   trigger gate, processing timer, `/api/intervention/*` calls or
+   `waiting`/`offer`/`withdraw` handling. Keep ignoring unknown stream `type`
+   values (ignore-unknown, don't throw) so the next contract change is additive.
 3. **Phase transitions / Stress-Tester.** `sessions.current_phase` is frozen at
    `'diverging'` (`updatePhase()` has zero callers) ⇒ Stress-Tester ghosts are
    currently unreachable. Don't chase "missing" contradiction ghosts.
 4. **`ignored` pair status.** Typed (`GhostStatus`) and documented ("2 new
    nodes without interaction → ignored") but no code sets it, and
    `ghost-status` only accepts accepted/rejected.
-5. **Velocity-adaptive debounce.** Docs say 8–25s adaptive; code is a fixed
-   `10s` per `session_id`.
-6. **Mutation events** (`node.updated`/`node.deleted`/`edge.deleted`) — schema
-   accepts only `node.created`/`edge.created`; edits never re-enrich
-   summary/embedding.
+5. **Agents reading context notes.** The notes are stored and visible to the user,
+   but no agent's prompt includes them yet — the pending half of context capture
+   (see `CONTEXT-CAPTURE.md`).
+6. **Live updates of notes across tabs/devices.** No backend push for context
+   changes. Same-browser tabs can sync client-side; Supabase Realtime is not used
+   (non-negotiable #8).
 
 ---
 
@@ -412,7 +452,7 @@ deletes the FE workarounds noted above.
 | # | Severity | Gap | Recommended fix |
 |---|---|---|---|
 | 1 | P1 | No auth on Plane 2/3 — any origin-bypassing client can post events / read a session's stream by uuid | Verify Supabase JWT (Authorization: Bearer) on all /api routes; token query-param for EventSource |
-| 2 | P1 | Free tier reaches Outer Subconscious via question edges (tier checked only in the debounced pipeline) | `getTierByUser` + `getAvailableAgents` gate inside `outer-sub-pipeline` (and articulator for symmetry) |
+| 2 | P1 | Free tier reaches Outer Subconscious via question edges (tier is never checked on that pipeline) | `getTierByUser` + `getAvailableAgents` gate inside `outer-sub-pipeline` (and articulator for symmetry) |
 | 3 | P1 | `carry_forward_ids` accepted, ignored | Wire into session-complete (persist chosen unresolved threads as `session_learnings`) or drop from the schema until built |
 | 4 | P2 | No Stripe checkout endpoint; webhook expects `metadata.user_id` set by whoever creates the subscription | Add `POST /api/stripe/checkout` creating the session with `metadata.user_id` |
 | 5 | P2 | `interacted_at` validated but unused | Use for `ignored`-status heuristics or drop |

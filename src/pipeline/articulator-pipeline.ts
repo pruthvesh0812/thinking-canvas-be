@@ -18,7 +18,7 @@ import type { GhostPair } from '../../types/index.js'
 // gesture — a plain logical/doubt/associative edge between existing nodes no
 // longer triggers anything, so rearranging the canvas is silent (see the edge
 // routing in src/routes/canvas-event.ts). There is nothing to route here:
-// Attunement and the judge are skipped and the Articulator runs straight away.
+// Attunement is skipped and the Articulator runs straight away.
 //
 // Flow: guard → build+publish a context-only ghost (no question node) →
 // short animation sleep → serialize the Articulator's thread → stream its

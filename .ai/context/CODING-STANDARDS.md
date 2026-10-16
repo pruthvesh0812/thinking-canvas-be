@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-06-18
-verified-against: ThinkingCanvas_TechnicalBuild.docx (post single-user refactor; added exhaustiveness-guard convention)
+last-verified: 2026-10-16
+verified-against: pivot — non-negotiables #1/#2 no longer name the Orchestrator/judge (otherwise unchanged since 2026-06-18)
 stale-after-days: 90
 ---
 
@@ -12,8 +12,8 @@ stale-after-days: 90
 
 ## Non-Negotiables
 
-1. **canAgentFire() before every Orchestrator route** — never skip
-2. **Tier enforcement server-side** in Orchestrator — never trust client claims
+1. **canAgentFire() before every agent run** — never skip
+2. **Tier enforcement server-side** — never trust client claims
 3. **canvases.original_intent is immutable** — INSERT once, never UPDATE
 4. **Agent prompts are constants** — never build from user input
 5. **Agent threads are per-canvas** — `canvas_id` is the thread key, never `session_id`
