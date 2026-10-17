@@ -199,44 +199,50 @@ export type Database = {
         }
         Relationships: []
       }
-      component_removal_reasons: {
+      component_removals: {
         Row: {
           canvas_id: string
+          component_id: string
+          component_label: string
+          component_type: string
           created_at: string
+          created_by: string | null
           id: string
           reason: string
           session_id: string | null
-          target_id: string
-          target_kind: string
         }
         Insert: {
           canvas_id: string
+          component_id: string
+          component_label: string
+          component_type: string
           created_at?: string
+          created_by?: string | null
           id?: string
           reason: string
           session_id?: string | null
-          target_id: string
-          target_kind: string
         }
         Update: {
           canvas_id?: string
+          component_id?: string
+          component_label?: string
+          component_type?: string
           created_at?: string
+          created_by?: string | null
           id?: string
           reason?: string
           session_id?: string | null
-          target_id?: string
-          target_kind?: string
         }
         Relationships: [
           {
-            foreignKeyName: "component_removal_reasons_canvas_id_fkey"
+            foreignKeyName: "component_removals_canvas_id_fkey"
             columns: ["canvas_id"]
             isOneToOne: false
             referencedRelation: "canvases"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "component_removal_reasons_session_id_fkey"
+            foreignKeyName: "component_removals_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
             referencedRelation: "sessions"
@@ -244,11 +250,67 @@ export type Database = {
           },
         ]
       }
+      context_attachments: {
+        Row: {
+          alt_text: string | null
+          canvas_id: string
+          created_at: string
+          entry_id: string
+          file_name: string
+          height: number | null
+          id: string
+          mime_type: string
+          scan_status: string
+          size_bytes: number
+          storage_path: string
+          uploaded_by: string | null
+          width: number | null
+        }
+        Insert: {
+          alt_text?: string | null
+          canvas_id: string
+          created_at?: string
+          entry_id: string
+          file_name: string
+          height?: number | null
+          id?: string
+          mime_type: string
+          scan_status?: string
+          size_bytes: number
+          storage_path: string
+          uploaded_by?: string | null
+          width?: number | null
+        }
+        Update: {
+          alt_text?: string | null
+          canvas_id?: string
+          created_at?: string
+          entry_id?: string
+          file_name?: string
+          height?: number | null
+          id?: string
+          mime_type?: string
+          scan_status?: string
+          size_bytes?: number
+          storage_path?: string
+          uploaded_by?: string | null
+          width?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "context_attachments_entry_canvas_fkey"
+            columns: ["entry_id", "canvas_id"]
+            isOneToOne: true
+            referencedRelation: "context_entries"
+            referencedColumns: ["id", "canvas_id"]
+          },
+        ]
+      }
       context_entries: {
         Row: {
           author_id: string | null
           canvas_id: string
-          content: string
+          content: string | null
           created_at: string
           deleted_at: string | null
           id: string
@@ -259,7 +321,7 @@ export type Database = {
         Insert: {
           author_id?: string | null
           canvas_id: string
-          content: string
+          content?: string | null
           created_at?: string
           deleted_at?: string | null
           id?: string
@@ -270,7 +332,7 @@ export type Database = {
         Update: {
           author_id?: string | null
           canvas_id?: string
-          content?: string
+          content?: string | null
           created_at?: string
           deleted_at?: string | null
           id?: string
@@ -297,39 +359,45 @@ export type Database = {
       }
       context_links: {
         Row: {
+          canvas_id: string
           created_at: string
           entry_id: string
           id: string
-          origin: string
+          origin_status: string
           state: string
           target_id: string | null
-          target_kind: string
+          target_type: string
+          updated_at: string
         }
         Insert: {
+          canvas_id: string
           created_at?: string
           entry_id: string
           id?: string
-          origin: string
+          origin_status: string
           state?: string
           target_id?: string | null
-          target_kind: string
+          target_type: string
+          updated_at?: string
         }
         Update: {
+          canvas_id?: string
           created_at?: string
           entry_id?: string
           id?: string
-          origin?: string
+          origin_status?: string
           state?: string
           target_id?: string | null
-          target_kind?: string
+          target_type?: string
+          updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "context_links_entry_id_fkey"
-            columns: ["entry_id"]
+            foreignKeyName: "context_links_entry_canvas_fkey"
+            columns: ["entry_id", "canvas_id"]
             isOneToOne: false
             referencedRelation: "context_entries"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "canvas_id"]
           },
         ]
       }
@@ -744,6 +812,27 @@ export type Database = {
         }
         Relationships: []
       }
+      system_config: {
+        Row: {
+          description: string | null
+          key: string
+          updated_at: string
+          value: Json
+        }
+        Insert: {
+          description?: string | null
+          key: string
+          updated_at?: string
+          value: Json
+        }
+        Update: {
+          description?: string | null
+          key?: string
+          updated_at?: string
+          value?: Json
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -756,6 +845,10 @@ export type Database = {
       append_thread_message: {
         Args: { p_message: Json; p_thread_id: string }
         Returns: undefined
+      }
+      create_context_entry: {
+        Args: { p_attachment?: Json; p_entry: Json; p_links: Json }
+        Returns: Database["public"]["Tables"]["context_entries"]["Row"]
       }
       decrement_insight_turns: {
         Args: { p_insight_id: string }

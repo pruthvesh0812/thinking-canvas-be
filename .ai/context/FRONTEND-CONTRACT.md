@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-10-16
-verified-against: pivot branch feature/pivot-text-context-capture-2026-10-16T1703 — Intervention Spectrum removed; context-capture tables, nodes.seq and edges.label added. Sections other than 1, 3, 4, 5.1, 8 and 10 were last verified 2026-07-19 (frontend-contract-holes).
+last-verified: 2026-10-17
+verified-against: pivot branch feature/pivot-text-context-capture-2026-10-16T1703 — Intervention Spectrum removed; context-capture schema rev 3 (tables, create_context_entry, system_config), nodes.seq and edges.label added. Sections other than 1, 3, 4, 5.1, 8 and 10 were last verified 2026-07-19 (frontend-contract-holes).
 stale-after-days: 30
 ---
 
@@ -29,9 +29,9 @@ PLANE 1 — Supabase direct (supabase-js + anon key + user JWT, RLS-scoped)
              session_learnings, subscriptions
   FE WRITES: canvases (create), nodes, edges
              (ghost accept: FE writes the accepted nodes/edges itself — §7)
-             context_entries, context_links, component_removal_reasons
-             (text-only context capture — §3.4; NO notify to the backend)
-  FE READS (also): context_entries, context_links, component_removal_reasons
+             context_entries, context_links, context_attachments,
+             component_removals (text-only context capture — §3.4; NO notify to the backend)
+  FE READS (also): those four + system_config (global tunables)
 
 PLANE 2 — Backend REST API (fetch → Railway/localhost:3001, JSON, no auth today)
   POST /api/canvas-event      notify backend AFTER a Supabase write (§5.1)
@@ -88,7 +88,7 @@ correctly at insert time (the backend reads them verbatim, never recomputes):
   canvas before the edge was drawn → Articulator. A drag-out-to-new-node edge
   is `both_existing: false`.
 
-`label` (nullable text, ≤200 chars) is the short label the user types on the
+`label` (nullable text, ≤80 chars) is the short label the user types on the
 edge itself — frontend-written, no notify. That is the edge, not a note.
 
 Two additional columns are also frontend-owned, purely for restoring the
@@ -114,26 +114,42 @@ exact visual reconnection on refetch (backend never reads them):
 ### 3.4 Context capture — frontend-written, backend-read
 
 Spec: "Text-Only Context Capture — Requirements" (Oct 16, 2026); model and rules in
-`CONTEXT-CAPTURE.md`. The frontend writes three tables directly (RLS = canvas
-ownership) and sends **no** `canvas-event` for any of it — agents read the notes
-live.
+`CONTEXT-CAPTURE.md`; columns in `DATABASE-SCHEMA.md` §13–17. The frontend writes
+directly (RLS = canvas ownership) and sends **no** `canvas-event` for any of it —
+agents read the notes live. There is no SSE message for context either.
 
-| Table | Frontend does |
+| Action | Frontend does |
 |---|---|
-| `context_entries` | INSERT a note (`source:'typed'`, `id` = a client-generated uuid, `content` ≤ 4000 chars — the product limit of 1,000 is the frontend's to enforce); UPDATE `content` to edit; UPDATE `deleted_at` to delete (set) or undo (clear). Never change `canvas_id` or `source` (the DB rejects it). `updated_at` is set by the DB. |
-| `context_links` | INSERT one link per target (`target_kind` `canvas`\|`node`\|`edge`; `target_id` NULL for `canvas`; `origin` `user_chosen`\|`user_moved`\|`shortcut`). A `/all` note is **one entry + N links**. Move = set the old link `state:'deleted'` and insert a new one with `origin:'user_moved'`. |
-| `component_removal_reasons` | INSERT the "Why remove this?" answer with the deleted component's kind + id. |
+| **Save a note** (or `/all`, or a file entry) | One call: `supabase.rpc('create_context_entry', { p_entry, p_links, p_attachment })` — types in `CreateContextEntryArgs`. `p_links` is a **JSON array** with ≥1 link (a note for every node = one entry + N links). Use client-generated uuids for the entry and each link: a retry with the same ids completes a half-finished write instead of duplicating. |
+| **Edit a note** | `update context_entries set content = …` |
+| **Delete a note / undo** | `update context_entries set deleted_at = now()` / `= null`. **Only that column** — don't touch the note's links; there is no restore logic. |
+| **Move a note** | `update context_links set target_id = …, origin_status = 'MOVED'` — in place. Undo updates it back. If the entry already has an active link on the destination, set the moved link's `state = 'deleted'` instead (the DB refuses a duplicate active link). |
+| **Remove one link** (v2 unlink) | `update context_links set state = 'deleted'` |
+| **"Why remove this?"** | `insert into component_removals` — `component_type`, `component_id`, `component_label` (e.g. "n4 · Pricing"), `reason`. Insert + select only. |
+| **Settings** | `select * from system_config` once on canvas load. Keys are on the `SystemConfigRow` type; env values stay as the fallback. Read-only for you. |
+| **Edge label** | `update edges set label = …` (≤80 chars) — no notify. |
 
 Rules that bite:
 - **An entry is visible only through an active link** (and while `deleted_at` is
-  NULL). Insert the entry, then its links; if the second step fails, retry both
-  as upserts by id — an entry with no links is invisible to everyone.
-- **Deleting a node or edge retires its links for you** — a DB trigger sets them
-  to `state:'deleted'`. The real DELETE should come after your own undo window
-  (as it does today), because the retire is permanent.
+  NULL). That is why `create_context_entry` insists on ≥1 link.
+- **Deleting a node or edge retires its links for you** — a DB trigger sets them to
+  `state = 'deleted'`. Write the real DELETE after your own undo window (as you do
+  today), because the retire is permanent. Don't flip link state yourself.
+- **Length:** the limit is `system_config` → `context.note_max_chars` (default 1000),
+  enforced by the DB on insert and on every edit of `content`; over the limit the
+  write fails with Postgres error `23514` (`check_violation`) — keep the draft and
+  show the message. There is also a hard ceiling of 3000.
+- **You can never hard-delete** entries, links or attachments, or edit/delete a
+  removal record (no RLS policy exists) — use the soft states above.
+- **Attachments:** `context_attachments` exists but there is no bucket and no safety
+  scan yet. Rows must be inserted `scan_status = 'pending'` (the RPC does this) and
+  you cannot update them; nothing is served to anyone until a scan exists.
+- **Link targets aren't validated** against nodes/edges (the node may not be saved
+  yet), so a note on a just-created node won't be rejected.
 - Badge counts and the panel list should both come from `context_links` where
-  `state='active'` joined to non-deleted entries, so they always match.
-- Empty or whitespace-only content for `typed`/`spoken` is rejected by the DB.
+  `state = 'active'` joined to entries with `deleted_at is null`, so they always match.
+- Not available yet: live updates of notes across tabs/devices, the backend-decided
+  "?" on edges (`edges.clarification_*`), and agents reading notes (§10).
 
 ---
 

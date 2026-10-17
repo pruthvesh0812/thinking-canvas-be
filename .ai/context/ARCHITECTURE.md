@@ -1,6 +1,6 @@
 ---
 last-verified: 2026-10-16
-verified-against: pivot — context-capture tables added to the table summary (Langfuse wiring unchanged)
+verified-against: pivot — context-capture tables (schema rev 3) added to the table summary (Langfuse wiring unchanged)
 stale-after-days: 30
 ---
 
@@ -157,7 +157,9 @@ service, not deployed from this repo.
 | `subscriptions` | user_id | Stripe sync. |
 | `context_entries` | canvas_id (+ session_id) | A note the user attached — typed now, spoken/attached later. Frontend-written. See `CONTEXT-CAPTURE.md`. |
 | `context_links` | entry_id | One entry → many targets (node / edge / the canvas). |
-| `component_removal_reasons` | canvas_id (+ session_id) | "Why remove this?" answers, keyed to the deleted component's id (no FK). |
+| `context_attachments` | entry_id + canvas_id | The file behind an attachment entry (one per entry). Table only — no bucket or scan yet. |
+| `component_removals` | canvas_id (+ session_id) | "Why remove this?" answers, keyed to the deleted component's id (no FK). |
+| `system_config` | — | Global tunables (key → JSON), read-only for clients. |
 
 ---
 

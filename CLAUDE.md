@@ -230,8 +230,8 @@ of the product, as of now. Its design record is kept, shelved, in
 `.ai/features/intervention-spectrum/`; the code is in git history before the
 `feature/pivot-text-context-capture-2026-10-16T1703` branch. In its place the
 backend gained the context-capture schema (`context_entries`, `context_links`,
-`component_removal_reasons`, `nodes.seq`, `edges.label`) — see
-`CONTEXT-CAPTURE.md`. What still runs: the explicit-edge agents (Articulator,
+`context_attachments`, `component_removals`, `system_config`, `nodes.seq`,
+`edges.label`) — see `CONTEXT-CAPTURE.md`. What still runs: the explicit-edge agents (Articulator,
 Outer Subconscious), Session Complete (Observer), ghost streaming and Rejection
 Insights. The next piece of work is redefining how agents are driven and how they
 read notes.

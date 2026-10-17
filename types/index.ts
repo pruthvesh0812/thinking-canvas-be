@@ -141,7 +141,7 @@ export type Edge = {
   // Nullable to keep pre-migration edges valid.
   from_handle: EdgeHandle | null
   to_handle: EdgeHandle | null
-  // Short label the user typed on the edge itself (≤200 chars). That is the
+  // Short label the user typed on the edge itself (≤80 chars). That is the
   // edge, not a note. Frontend-written; NULL = unlabelled.
   label: string | null
   created_at: string
@@ -153,51 +153,121 @@ export type Edge = {
 // Frontend-written (supabase-js + RLS), backend-read: agents see entries live at
 // serialize time. One shape for typed, spoken and (later) attached context.
 // An entry is visible only through an ACTIVE link and while deleted_at is NULL.
+// Schema rev 3: thinking-canvas-frontend .ai/features/text-context-capture/schema.md
 
 export type ContextSource = 'typed' | 'spoken' | 'attachment'
 
 // 'canvas' = background ("Canvas context", target_id NULL). 'group' is reserved for v2.
-export type ContextTargetKind = 'canvas' | 'node' | 'edge'
+export type ContextTargetType = 'canvas' | 'node' | 'edge'
 
-// How the link came to exist: picked directly, moved by the user, or set by an
-// @n / #text / /all shortcut.
-export type ContextLinkOrigin = 'user_chosen' | 'user_moved' | 'shortcut'
+// OWNED = written on that component directly; MOVED = the user moved it there.
+// (Says THAT it moved, not from where.)
+export type ContextOriginStatus = 'OWNED' | 'MOVED'
 
-// 'deleted' = the user removed the link, or its node/edge row was deleted (DB trigger).
+// 'deleted' = the user removed the link, or its node/edge row was deleted (DB
+// trigger). Deleting a NOTE does not touch its links — it sets deleted_at.
 export type ContextLinkState = 'active' | 'deleted'
 
 export type ContextEntry = {
   id: string                       // client-generated
   canvas_id: string
   session_id: string | null
-  content: string                  // plain text; never rewritten by the system
+  // Plain text, never rewritten by the system. NULL only for an attachment with
+  // no caption. Limit: system_config 'context.note_max_chars' (DB ceiling 3000).
+  content: string | null
   source: ContextSource
   author_id: string | null         // v1 = the canvas owner
   created_at: string
   updated_at: string               // bumped by DB trigger on every UPDATE
-  deleted_at: string | null        // soft delete — undo clears it; agents never see a row with this set
+  deleted_at: string | null        // the USER deleted the note — undo clears it; agents never see a row with this set
 }
 
 export type ContextLink = {
   id: string                       // client-generated
   entry_id: string
-  target_kind: ContextTargetKind
-  target_id: string | null         // NULL ⇔ target_kind === 'canvas'; no FK (polymorphic)
-  origin: ContextLinkOrigin
+  canvas_id: string                // always equals the entry's canvas_id (composite FK)
+  target_type: ContextTargetType
+  target_id: string | null         // NULL ⇔ target_type === 'canvas'; no FK (polymorphic)
+  origin_status: ContextOriginStatus
   state: ContextLinkState
+  created_at: string
+  updated_at: string               // bumps on a move and on any state change
+}
+
+// The file behind an 'attachment' entry — v1: one per entry. Table only: there is
+// no storage bucket or safety scan yet, so scan_status stays 'pending' and
+// nothing may read the file. Clients insert as 'pending' and cannot update.
+export type AttachmentScanStatus = 'pending' | 'clean' | 'rejected'
+
+export type ContextAttachment = {
+  id: string
+  entry_id: string
+  canvas_id: string
+  storage_path: string             // object path in a PRIVATE bucket — never a public URL
+  file_name: string
+  mime_type: string
+  size_bytes: number
+  width: number | null             // images only
+  height: number | null
+  scan_status: AttachmentScanStatus
+  alt_text: string | null
+  uploaded_by: string | null
   created_at: string
 }
 
-// "Why remove this?" answer, stored against the DELETED component's kind + id —
+// "Why remove this?" answer, stored against the DELETED component's type + id —
 // never on a surviving component. No FK: the component no longer exists.
-export type ComponentRemovalReason = {
+export type ComponentRemoval = {
   id: string
   canvas_id: string
   session_id: string | null
-  target_kind: 'node' | 'edge'
-  target_id: string
+  component_type: 'node' | 'edge'
+  component_id: string
+  component_label: string          // snapshot, e.g. "n4 · Pricing", so the record stays readable
   reason: string
+  created_by: string | null
   created_at: string
+}
+
+// Global tunables, read by the frontend on canvas load (select-only for clients).
+// Keys: context.composer_max_lines, context.canvas_bar_max_lines,
+// context.hash_autocomplete_rows, context.note_max_chars,
+// context.panel_note_collapsed_lines, context.removal_prompt_visible_ms,
+// edge.clarification_delay_ms, edge.needs_you_max_visible.
+export type SystemConfigRow = {
+  key: string
+  value: unknown                   // JSON — numbers for every key above
+  description: string | null
+  updated_at: string
+}
+
+// Arguments of the Postgres function create_context_entry (supabase.rpc) — the one
+// atomic write for a note: entry + its links (+ the file row). Idempotent on the
+// client-generated ids, so a retry completes a half-finished write. Needs ≥1 link.
+export type CreateContextEntryArgs = {
+  p_entry: {
+    id?: string
+    canvas_id: string
+    session_id?: string | null
+    source: ContextSource
+    content?: string | null
+  }
+  p_links: Array<{
+    id?: string
+    target_type: ContextTargetType
+    target_id?: string | null
+    origin_status?: ContextOriginStatus   // default 'OWNED'
+  }>
+  p_attachment?: {
+    id?: string
+    storage_path: string
+    file_name: string
+    mime_type: string
+    size_bytes: number
+    width?: number | null
+    height?: number | null
+    alt_text?: string | null
+  } | null
 }
 
 // ─────────────────────────────────────────────

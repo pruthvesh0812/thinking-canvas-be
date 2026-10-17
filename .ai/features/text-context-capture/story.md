@@ -2,48 +2,56 @@
 feature: "text-context-capture"
 type: story
 created: 2026-10-16
-status: in-progress — schema, types and docs built; agent consumption and four open decisions pending
+status: in-progress — schema, RPC, config, types and docs built (rev 3); agent consumption, the "?" and live updates deliberately deferred
 git_branch: "feature/pivot-text-context-capture-2026-10-16T1703"
-source: "Text-Only Context Capture — Requirements (Oct 16, 2026, @Pruthvesh) · frontend ask: thinking-canvas-frontend .ai/features/text-context-capture/backend-requirements.md (B1–B14)"
+source: "Text-Only Context Capture — Requirements (Oct 16, 2026, @Pruthvesh) · frontend: thinking-canvas-frontend .ai/features/text-context-capture/ (schema.md rev 3, backend-requirements.md, frontend-requirements.md)"
 ---
 
 ## What
-The backend half of the frontend's text-only context capture: tables for user notes and their links, a stable node number, edge labels, and removal reasons — plus, in the same change, removal of the Intervention Spectrum so the product no longer carries it.
+The backend half of the frontend's text-only context capture: tables for user notes, their links and attachments, a stable node number, edge labels, removal reasons, a settings table — plus, in the same change, removal of the Intervention Spectrum so the product no longer carries it.
 
 ## Why
 Product pivot: typing users had no place to put the "why" behind a node, so agents saw only labels. Voice and text are meant to share one context store. The Intervention Spectrum (judge → offer → consent timer) is no longer part of the product, as of now, and its schema and code were in the way.
 
 ## Blast Radius
-- **Removed:** `src/routes/intervention.ts`, `src/streaming/offer.ts`, `src/lib/intervention.ts`, `src/db/intervention-offers.ts`, `src/pipeline/agent-pipeline.ts` (the intervention + impact pipelines), `src/agents/orchestrator.ts` (the judge); `waiting`/`offer`/`withdraw` stream messages; `InterventionOffer` types; receptivity + `maybeAdvancePhase` in `src/db/sessions.ts`; the in-flight-offer half of `canAgentFire`; `serializeJudgeContext` + `buildFullRejectionBlock`; `.ai/context/intervention-layer/`.
-- **Changed:** `canvas-event` (delete / set-aside / restore events are now acknowledged and ignored — kept in the schema so the frontend can't 400), `session-complete` (no offer purge), `JudgeMapNode` → `ContentMapNode`.
-- **DB:** `20261016000001_drop_intervention_layer.sql` (**destructive** — drops `intervention_offers`, `sessions.latest_seq`/`receptivity*`, `canvases.canvas_version`, `allocate_session_seq`, the fingerprint triggers); `20261016000002_context_capture.sql` (new tables, `nodes.seq`, `canvases.next_node_seq`, `edges.label`).
+- **Removed (migration `20261016000001`, destructive):** `intervention_offers`, `sessions.latest_seq`/`receptivity*`, `canvases.canvas_version`, `allocate_session_seq`, the fingerprint triggers — and the intervention route, offer streaming, judge, intervention/impact pipelines, `waiting`/`offer`/`withdraw`, `.ai/context/intervention-layer/`. `canvas-event` still *accepts* delete / set-aside / restore events but only acknowledges them.
+- **Added (`20261016000002`, then reconciled to rev 3 by `20261017000001`):** `context_entries`, `context_links`, `context_attachments`, `component_removals`, `system_config`, `nodes.seq` + `canvases.next_node_seq`, `edges.label`, the RPC `create_context_entry`, shared types in `types/index.ts`.
+- **Migrations are additive on purpose:** `20261017000001_context_capture_rev3.sql` is a NEW file rather than an edit of `20261016000002_context_capture.sql`, so it is safe whether or not the earlier one was ever applied; it also migrates any rows the earlier one created. If `20261016000002` is confirmed never applied anywhere, the two can be squashed before merge.
 
-## Status of the frontend's 14 requirements
+## Status against the frontend's requirements (their numbering)
 | # | Requirement | Status |
 |---|---|---|
-| B1 | `context_entries` | **Done** — client-generated id, soft delete, `updated_at` trigger, 4000-char backstop |
-| B2 | `context_links` | **Done**, with deviations: no `canvas_id` on links (RLS goes through the entry); `state` is `active\|deleted`, and a trigger retires links when their node/edge row is deleted; partial unique index on active links |
-| B3 | `nodes.seq` | **Done** — trigger + monotonic `canvases.next_node_seq`, backfilled in creation order, never reused/renumbered; arrives with every node select |
-| B4 | Decision log | **Cut** — no consumer; entry/link timestamps + `origin` already record it. Revisit if something needs to read it |
-| B5 | Removal reasons | **Done** — `component_removal_reasons`, no FK to the deleted component |
-| B6 | Notify events | **Dropped for v1** — agents read notes live; the frontend sends nothing. Revisit only if the agent redesign wants a note to trigger a run |
-| B7 | Settings endpoint | **Deferred** (settings infrastructure to be discussed). Until then: frontend constants + the DB backstop |
-| B8 | "?" rule | **Pending decision** — with the 10 s dwell gone it may be a pure data predicate the frontend computes; backend would add only `edges.owner` and a dismissal column. Needs: does "after the user moves on" survive? |
-| B9 | Undo | **No backend work** — undo is in-memory on the frontend; RLS allows the updates |
-| B10 | Drafts | **Frontend-local for v1** (overrides the spec's "backend stores drafts") |
-| B11 | Live updates | **Not built** — same-browser tabs sync client-side; Realtime stays off (non-negotiable #8); revisit with sharing |
-| B12 | Agents read notes | **Pending the agent redesign** — design in `CONTEXT-CAPTURE.md`: live read, active links only, skip set-aside targets, budget for canvas notes, lazy rolling summary only when raw notes exceed it |
-| B13 | `edges.label` | **Done** (column + type). Not yet shown to agents |
-| B14 | v2 / attachments | Later |
+| B1 | `context_entries` | **Done** — client id, soft delete, `content` nullable for attachments, hard ceiling 3000 + live limit from `system_config` (trigger, insert + edit) |
+| B2 | `context_links` | **Done** — `target_type`, `origin_status` OWNED/MOVED (`shortcut` dropped), `canvas_id` + `updated_at`, composite FK to the entry, partial unique active-link index, trigger retiring links when a node/edge row is deleted |
+| B3 | `nodes.seq` | **Done** — trigger + monotonic counter, backfilled; hardened vs the sketch in `schema.md` (an upsert of an existing node neither renumbers it nor burns a number; a client-supplied value is ignored; renumbering raises) |
+| B4 | `component_removals` | **Done** — with `component_label` snapshot and `created_by`; insert + select only |
+| B5 | `context_attachments` | **Table done** — one file per entry, clients insert `pending` only and can't update. **No bucket, no scan** (decided later) |
+| B6 | RPCs + notify events | **Half**: `create_context_entry` built. **No** `delete_/restore_context_entry` (note delete = set `deleted_at`, links untouched) and **no notify events** (agents read live; live updates are out) |
+| B7 | `system_config` | **Done** — seeded, read-only for clients |
+| B8 | "?" on edges (`edges.clarification_*`, SSE) | **Deferred** — the rule will be an LLM call; revisit with the LLM work |
+| B9 | Undo | No backend work — in-memory on the frontend; RLS allows the updates |
+| B11 | Live updates (SSE) | **Not for v1** (decided) |
+| B12 | Agents read notes / `agent_context` view | **Deferred** — to be discussed with the agent redesign. The view must be `security_invoker` (or revoke grants) |
+| B13 | `edges.label` | **Done** (≤80 chars). Not yet shown to agents |
+| — | Auth on `/api` routes | **Separate story** |
+
+## Where the frontend must differ from its own rev 3 docs
+1. **Note delete/restore:** write only `context_entries.deleted_at` — don't flip links; `restoreEntry` needs no live-target list. There are no `delete_/restore_context_entry` RPCs.
+2. **`create_context_entry`:** `p_links` is a JSON array (`jsonb`), not `jsonb[]`; needs ≥1 link; types are `CreateContextEntryArgs`.
+3. **No `canvas-event` notify for any context write**, and no `context.*` event types exist.
+4. **No `edges.clarification_*` column and no `edge_clarification` / `context_changed` SSE message** — keep the local stand-in for the "?" and the `storage`-event tab sync.
+5. **Note length:** the DB enforces `system_config` `context.note_max_chars` and fails with `23514` — handle it as "keep the draft, show the message".
+6. **No client hard-delete** of entries/links/attachments; attachments inserted by clients must be `pending`.
+7. **Replace the `nodes.seq` trigger sketch in `schema.md` §2.4** with the hardened one in `20261016000002_context_capture.sql`.
 
 ## Verification
-`tsc --noEmit` clean; `vitest` 9/9. Both migrations applied on top of the full existing chain on a scratch Postgres 16 (stubs for `auth.*` and pgvector) and exercised with assertions: seq assignment, no reuse after deleting the last node, upsert-of-existing keeps number and burns no counter, client-supplied seq ignored, renumbering rejected, entry/link constraints, retire triggers (incl. `/all`), RLS isolation between two users, canvas cascade, and backfill on a populated database. **Not covered:** pgvector, real Supabase roles, and PostgREST's own upsert SQL (tested the equivalent `ON CONFLICT` at SQL level). `database.types.ts` was hand-edited (no Docker for `supabase gen types`) — regenerate when convenient.
+`tsc --noEmit` clean; `vitest` 9/9. Migrations applied over the full existing chain on a scratch Postgres 16 (stubs for `auth.*` and pgvector), including the path "`20261016000002` applied with data, then `20261017000001`", and exercised with assertions: seq rules, entry/link/attachment constraints, the live length limit (raise, lower, garbage value), in-place move, note delete/restore leaving links alone, node/edge delete retiring links, `create_context_entry` (atomic, idempotent retry, completes a half-finished write, rejects leave nothing behind, refuses another user's id), RLS (no client deletes, can't self-clean a file, config read-only, two-user isolation), canvas cascade. **Not covered:** pgvector, real Supabase roles, PostgREST's own request handling (e.g. how it passes a JSON array to the RPC). `database.types.ts` was hand-edited — regenerate when convenient.
 
-## Left behind on purpose (the agent redesign decides)
-Attunement, `sessions.current_phase` + `updatePhase()` (no caller), `lib/tier.ts` (`getAvailableAgents`, now unused), the Expander and Stress-Tester agents (no caller — nothing runs an agent on node creation; `node.created` still sends `canvas/node.created`, which nothing subscribes to), and the model tables that still list an Orchestrator (`ARCHITECTURE.md`, `LLM-LAYER.md`, `LOGGING.md`, `EXTERNAL-DOCS.md`). The `branching` and `session-branching` stories still reference intervention concepts.
+## Left behind on purpose
+Attunement, `sessions.current_phase` + `updatePhase()` (no caller), `lib/tier.ts`, the Expander and Stress-Tester agents (no trigger — `node.created` still sends `canvas/node.created`, which nothing subscribes to), and the model tables that still list an Orchestrator. The `branching` and `session-branching` stories still reference intervention concepts.
 
 ## Open Questions
-1. What drives agents now, and how do they read notes (B12)?
-2. B8: does the "?" wait for the user to move on, or appear immediately? Human-drawn edges only?
-3. Rolling summary: lazy-on-read when canvas notes exceed a budget — agreed?
-4. Auth: Plane 2/3 still have no user auth (Supabase JWT is only used on direct Supabase calls). Separate story before launch.
+1. Agent side: what drives agents and how they read notes (B12), eager vs lazy rolling summary, the `agent_context` view.
+2. The "?" on edges — LLM-decided; which edge types, what signal.
+3. Attachments: bucket name/path convention, scan mechanism, size/type limits (`attachment.*` keys not seeded yet).
+4. Auth for `/api` routes (own story) — more pressing once anything on those routes triggers scans or relays.
