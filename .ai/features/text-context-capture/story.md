@@ -36,6 +36,8 @@ Product pivot: typing users had no place to put the "why" behind a node, so agen
 | — | Auth on `/api` routes | **Separate story** |
 
 ## Where the frontend must differ from its own rev 3 docs
+(Full hand-off with the recommended build order: [`frontend-handoff.md`](./frontend-handoff.md).)
+
 1. **Note delete/restore:** write only `context_entries.deleted_at` — don't flip links; `restoreEntry` needs no live-target list. There are no `delete_/restore_context_entry` RPCs.
 2. **`create_context_entry`:** `p_links` is a JSON array (`jsonb`), not `jsonb[]`; needs ≥1 link; types are `CreateContextEntryArgs`.
 3. **No `canvas-event` notify for any context write**, and no `context.*` event types exist.
