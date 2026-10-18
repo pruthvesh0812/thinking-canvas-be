@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-07-17
-verified-against: intervention-spectrum (judge, v1 phase latch, Observer content-only)
+last-verified: 2026-10-16
+verified-against: pivot — Intervention Spectrum (judge, offers, phase latch) removed; context capture added
 stale-after-days: 90
 ---
 
@@ -8,9 +8,10 @@ stale-after-days: 90
 
 > **Load this when:** Any task involving agents, canvas behaviour, node/edge logic, ghost nodes, Multi-Canvas model, Rejection Insights, or the AI collaboration model.
 >
-> **See also:** `.ai/context/intervention-layer/` — *when* and *how loudly* the AI
-> offers help (the judge, the decide→wait→generate consent gate, the show ruleset).
-> This file covers *what* the roles are; that folder covers *when they fire*.
+> **See also:** `CONTEXT-CAPTURE.md` — the user's own notes on nodes, edges and the
+> canvas (the "why" behind a node), which agents are meant to read. This file
+> covers *what* the roles are; how they are *triggered* is being redesigned
+> (see `AGENT-PIPELINE.md` → Status).
 
 ---
 
@@ -61,12 +62,14 @@ User
 | **Articulator** | Edge drawn between two existing nodes | Completes half-formed connection — 2-3 possible articulations | gemini-2.5-flash-lite (`models.content()`) |
 
 **Infrastructure components (not content agents):**
-- **Attunement Layer** — Classifies cognitive mode before the judge. Model: gemini-2.5-flash (`models.fast()`, thinking:OFF)
-- **The Judge** — Maturity gate + single-best router in one call over the full canvas map. **Replaces the old Orchestrator** (`src/agents/orchestrator.ts` now exports `runJudge`). Model: `models.fast()` + `thinking:high`. See `.ai/context/intervention-layer/02-the-judge.md`.
-- **Rejection Insights Engine** — Processes *content* ghost rejections → negative constraints. Model: gemini-2.5-flash (`models.fast()` + `models.thinking('low')`). Note: **offer-response** (defer/dismiss/ignore) is a *timing* signal and feeds the separate **receptivity** model, never this engine.
+- **Attunement Layer** — Classifies cognitive mode before an agent runs. Model: gemini-2.5-flash (`models.fast()`, thinking:OFF)
+- **Rejection Insights Engine** — Processes *content* ghost rejections → negative constraints. Model: gemini-2.5-flash (`models.fast()` + `models.thinking('low')`).
 
-> **The Observer is a content agent only.** An earlier "Observer gate-mode" idea
-> (Observer holding maturity) was dropped — maturity now lives in the judge.
+> **The Observer is a content agent only.** It runs at Session Complete and never
+> gates or routes other agents.
+>
+> **There is no router agent.** The Orchestrator, then the judge that replaced it,
+> were both removed; the Expander and Stress-Tester currently have no trigger.
 
 ---
 

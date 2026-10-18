@@ -2,10 +2,17 @@
 feature: "intervention-spectrum"
 type: design
 created: 2026-07-03
-status: draft
+status: shelved — removed 2026-10-16 (pivot); design record only
 git_branch: "claude/ai-intervention-spectrum-moumhu"
 supersedes_when_ratified: "CLAUDE.md non-negotiable #9 · CANVAS-SYNC.md · Orchestrator + Observer roles in CORE-CONCEPTS.md/AGENT-PIPELINE.md"
 ---
+
+> **SHELVED — removed from the product 2026-10-16 (pivot to text-only context
+> capture).** The code, migrations' effects and context docs for this feature were
+> removed on branch `feature/pivot-text-context-capture-2026-10-16T1703`; the last
+> commit containing them is that branch's parent (`cbda6d9`). This file is kept as
+> the design record in case a consent/maturity layer returns — it describes
+> something that does **not** exist in the code. Don't build against it.
 
 # AI Intervention Spectrum — Design
 

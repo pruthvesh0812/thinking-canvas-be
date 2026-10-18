@@ -1,6 +1,6 @@
 ---
-last-verified: 2026-07-17
-verified-against: intervention-spectrum (intervention_offers + fingerprint/seq/receptivity columns)
+last-verified: 2026-10-16
+verified-against: migrations 20261016000001 (drop intervention schema) + 20261016000002 + 20261017000001 (context capture, schema rev 3)
 stale-after-days: 60
 ---
 
@@ -9,6 +9,8 @@ stale-after-days: 60
 > **Load this when:** Writing DB queries, adding migrations, debugging data issues, or understanding what a field is used for.
 
 All tables live in the `public` schema (Supabase default). RLS is enabled on every table.
+
+> **See also:** `CONTEXT-CAPTURE.md` — the model behind `context_entries`, `context_links`, `context_attachments`, `component_removals`, `system_config`, `nodes.seq` and `edges.label` (§13–17, §3, §4).
 
 ---
 
@@ -26,7 +28,11 @@ All tables live in the `public` schema (Supabase default). RLS is enabled on eve
 10. [subscriptions](#10-subscriptions)
 11. [observer_structures](#11-observer_structures)
 12. [observer_edges](#12-observer_edges)
-13. [intervention_offers](#13-intervention_offers)
+13. [context_entries](#13-context_entries)
+14. [context_links](#14-context_links)
+15. [component_removals](#15-component_removals)
+16. [context_attachments](#16-context_attachments)
+17. [system_config](#17-system_config)
 
 ---
 
@@ -40,7 +46,7 @@ The permanent top-level container for a user's thinking space. Never deleted.
 | `user_id` | `UUID FK → auth.users` | Owner — used by RLS policy to restrict access |
 | `title` | `TEXT NOT NULL` | Human-readable canvas name, shown in UI |
 | `original_intent` | `TEXT NOT NULL` | The north star — WHY this canvas exists. Written once on creation, **never updated**. Immutability enforced by RLS policy. Injected into every agent serialization as Tier 0 anchor. |
-| `canvas_version` | `INT NOT NULL DEFAULT 0` | **Context fingerprint** — a change-detector, NOT content. Bumped by a DB trigger on every `nodes` AND `edges` mutation (insert/update/delete), so re-parenting can't slip past. Powers the Impact Check + wake-time re-judge. See intervention-layer/04. |
+| `next_node_seq` | `INT NOT NULL DEFAULT 1` | Monotonic counter behind `nodes.seq` — the next number to hand out. Only ever incremented (by the `assign_node_seq` trigger), so a deleted node's number is never reused. |
 | `created_at` | `TIMESTAMPTZ` | Creation timestamp |
 
 **RLS:** `user_id = auth.uid()` — users see only their own canvases.
@@ -57,11 +63,8 @@ An episodic thinking run within a canvas. A canvas can have many sessions over t
 | `id` | `UUID PK` | Session identifier |
 | `canvas_id` | `UUID FK → canvases` | Which canvas this session belongs to |
 | `status` | `TEXT` | `active` or `closed` — only one active session per canvas at a time |
-| `current_phase` | `TEXT` | `diverging` or `converging` — gates the judge's phase-bound agents (Expander vs Stress-Tester). v1 = one-way latch via `maybeAdvancePhase()`. |
+| `current_phase` | `TEXT` | `diverging` or `converging` — nothing sets it any more: it stays `diverging`. (The one-way latch, `maybeAdvancePhase`, went with the Intervention Spectrum; `updatePhase()` remains but has no caller.) |
 | `node_sequence` | `UUID[]` | Ordered array of node IDs created **in this session only**. Updated atomically via `append_node_to_sequence()` RPC. Used by serializer to reconstruct the thinking trail. |
-| `latest_seq` | `INT NOT NULL DEFAULT 0` | Monotonic version guard — the highest intervention `seq` allocated for this session. Bumped atomically by `allocate_session_seq()` RPC. A parked run whose `seq` falls behind is stale (intervention-layer/06). |
-| `receptivity` | `NUMERIC(4,3) NOT NULL DEFAULT 0.500` | Decayed offer-response **timing** aggregate, `[0,1]`. Tunes show intensity + timer length. Fed by dismiss/ignore/process-now — **never** by content rejections (intervention-layer/05). |
-| `receptivity_updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Last receptivity write — the anchor for the decay-toward-neutral calc. |
 | `start_time` | `TIMESTAMPTZ` | When the session was started |
 | `end_time` | `TIMESTAMPTZ nullable` | Set when session is closed via Session Complete flow. NULL = still active. |
 
@@ -79,6 +82,7 @@ A single thought unit on the canvas. Created by the user (frontend writes direct
 | `canvas_id` | `UUID FK → canvases` | Which canvas — nodes are canvas-scoped, visible across ALL sessions |
 | `session_id` | `UUID FK → sessions` | Which session created this node (for trail reconstruction) |
 | `owner` | `TEXT` | `human` or `ai` — ghost nodes accepted into canvas are marked `ai` |
+| `seq` | `INT NOT NULL` | The stable number the user sees on the node (n1, n2, …). **DB-assigned** by a `BEFORE INSERT` trigger — the frontend never writes it, and any value an INSERT supplies is discarded. `UNIQUE (canvas_id, seq)`, creation order, never reused (counter is `canvases.next_node_seq`) and never renumbered (`UPDATE` of `seq` raises). Returned with every node select. Not the serializer's `seq:N`, which is a prompt-text label. |
 | `content` | `TEXT nullable` | Full text written by the user. NULL = empty node (has meaning — represents a thought not yet articulated). |
 | `summary` | `TEXT nullable` | One-sentence directional summary generated by `gemini-2.5-flash` on node save. Begins with a direction marker word. Used in Tier 3/4 serialization and all cursor tools. |
 | `direction_marker` | `TEXT nullable` | Extracted marker: `establishes`, `questions`, `contradicts`, or `explores`. Stored separately for fast filtering without parsing summary text. |
@@ -109,6 +113,7 @@ A directed connection between two nodes. Created by the user (frontend writes di
 | `both_existing` | `BOOLEAN` | `true` when both `from_node_id` and `to_node_id` were already on the canvas before this edge was drawn. `true` triggers Articulator pipeline immediately (bypasses debounce). |
 | `from_handle` | `TEXT nullable` | Which side of the source node the edge attaches to — `TOP` / `RIGHT` / `LEFT` / `BOTTOM`. **Frontend-owned** — written on edge create, read on refetch to reattach visually. Backend never touches. CHECK constraint enforces the four values (NULL passes). |
 | `to_handle` | `TEXT nullable` | Which side of the target node the edge attaches to. Same ownership rules and CHECK constraint as `from_handle`. |
+| `label` | `TEXT nullable` | A short label (≤80 chars) the user typed on the edge itself — that is the edge, not a note. **Frontend-written.** NULL = unlabelled. |
 | `created_at` | `TIMESTAMPTZ` | Creation timestamp |
 
 **RLS:** Access via canvas ownership.
@@ -279,33 +284,115 @@ CORE-CONCEPTS.md → The Observer Structure (steps 5-6).
 
 ---
 
-## 13. intervention_offers
+## 13. context_entries
 
-The persisted handle for the decide→wait→generate handshake — the durable "in
-flight" state every step of an intervention references by `id`/`seq`. **Ephemeral**:
-it is operational state, not a permanent record. At a terminal status its
-receptivity signal is folded into `sessions.receptivity` and then the row is purged
-(session-close sweep + a TTL sweep for abandoned waits). The permanent "AI helped
-here" record lives on `agent_threads` (`ghost_pair`) + `ai_contributions`, never
-here. Full lifecycle: intervention-layer/05.
+One piece of user context — a typed note today; a spoken transcript piece or an
+attachment later. Frontend-written (supabase-js + RLS), read live by the backend.
+See `CONTEXT-CAPTURE.md` for the model and the visibility rule.
 
 | Column | Type | Use |
 |---|---|---|
-| `id` | `UUID PK` | Offer id — pre-generated by the route so `step.waitForEvent` can match on it |
-| `canvas_id` | `UUID FK → canvases` | Canvas scope |
-| `session_id` | `UUID FK → sessions` | Session scope — single-flight is enforced per session |
-| `agent_role` | `TEXT` | The judge's single-best route (`expander` \| `stress_tester` \| …) |
-| `trigger_node_id` | `UUID FK → nodes` | The node whose activity invoked the judge |
-| `anchor_node_ids` | `UUID[]` | The judge's `locus_node_ids` — where the move lands; the FE keys ghosts by `(anchor_node_id, seq)` |
-| `seq` | `INT NOT NULL` | Per-session monotonic version, compared against `sessions.latest_seq` (intervention-layer/06) |
-| `context_fingerprint` | `TEXT NOT NULL` | The `canvas_version` snapshot the offer was born from — change-detector for the Impact Check, NOT content |
-| `directness` | `TEXT nullable` | `direct` \| `subtle` — set at show time by the show ruleset (intervention-layer/03) |
-| `headline` | `TEXT nullable` | Backend-authored sidebar-card line — set at show time |
-| `status` | `TEXT NOT NULL DEFAULT 'waiting'` | `waiting` → `shown` → `pulled`\|`dismissed`\|`superseded`\|`expired` |
-| `created_at` | `TIMESTAMPTZ` | Creation timestamp — also the TTL anchor for the abandoned-wait sweep |
-| `resolved_at` | `TIMESTAMPTZ nullable` | Set on any terminal status |
+| `id` | `UUID PK` | **Client-generated**, so the frontend never needs a read-back and a retry is an idempotent upsert |
+| `canvas_id` | `UUID FK → canvases` | Canvas scope. Immutable after insert. `UNIQUE (id, canvas_id)` so links/attachments can reference the pair |
+| `session_id` | `UUID FK → sessions nullable` | Session it was written in (`ON DELETE SET NULL`) |
+| `content` | `TEXT nullable` | Plain text, never rewritten by the system. NULL only for an attachment with no caption; otherwise non-blank. Length: hard CHECK ≤ 3000, plus the changeable limit `system_config` → `context.note_max_chars` (default 1000), enforced by a trigger on insert and on every edit of the text |
+| `source` | `TEXT NOT NULL` | `typed` \| `spoken` \| `attachment`. Immutable after insert |
+| `author_id` | `UUID FK → auth.users nullable` | Defaults to `auth.uid()`; v1 = the canvas owner |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `updated_at` is bumped by a trigger on **every** UPDATE (edit, delete, restore) |
+| `deleted_at` | `TIMESTAMPTZ nullable` | The **user deleted this note** — undo clears it. Agents must never see a row with this set. Deleting a note changes only this column; its links are left alone |
 
-**RLS:** Access via canvas ownership.
+**RLS:** canvas ownership; select / insert / update — **no client DELETE**.
+
+---
+
+## 14. context_links
+
+Which component(s) an entry is about. One entry can have many links: a note written
+for every node is **one entry + N links**, never N copies, and one undo removes it
+everywhere.
+
+| Column | Type | Use |
+|---|---|---|
+| `id` | `UUID PK` | Client-generated |
+| `entry_id` + `canvas_id` | composite `FK → context_entries (id, canvas_id)` | `ON DELETE CASCADE`. The pair guarantees a link can never claim a different canvas than its entry; `canvas_id` lets RLS and per-canvas reads skip the join |
+| `target_type` | `TEXT NOT NULL` | `canvas` (background) \| `node` \| `edge`. `group` is reserved for v2 |
+| `target_id` | `UUID nullable` | The node/edge id. NULL ⇔ `target_type = 'canvas'` (CHECK). **No FK** — polymorphic, so liveness is kept by the retire triggers. Not validated against nodes/edges (the node may not be saved yet) |
+| `origin_status` | `TEXT NOT NULL` | `OWNED` (written there directly) \| `MOVED` (the user moved it there). Says *that* it moved, not from where |
+| `state` | `TEXT NOT NULL DEFAULT 'active'` | `active` \| `deleted` — the user removed the link, or its node/edge row was deleted. **Not** changed by deleting the note |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `updated_at` bumps (trigger) on a move and on any state change |
+
+A **move** is an in-place `UPDATE` of `target_id` + `origin_status`; undo updates it
+back. At most one **active** link per `(entry, target)` — a partial unique index with
+the canvas target folded in via `COALESCE(target_id, canvas_id)`; a move onto a target
+the entry already has an active link on is refused (the frontend deletes the moved
+link instead). When a `nodes`/`edges` row is deleted, an `AFTER DELETE` trigger
+(`retire_context_links`) sets its active links to `deleted`.
+
+**RLS:** canvas ownership via `canvas_id`; select / insert / update — **no client DELETE**.
+
+---
+
+## 15. component_removals
+
+The answer to "Why remove this?", stored against the **deleted** component's type and
+id — never on a surviving component. Deliberately no FK on `component_id`: the
+component is gone. Nothing in the backend reads it yet.
+
+| Column | Type | Use |
+|---|---|---|
+| `id` | `UUID PK` | |
+| `canvas_id` | `UUID FK → canvases` | Canvas scope |
+| `session_id` | `UUID FK → sessions nullable` | `ON DELETE SET NULL` |
+| `component_type` | `TEXT NOT NULL` | `node` \| `edge` |
+| `component_id` | `UUID NOT NULL` | The deleted component's id |
+| `component_label` | `TEXT NOT NULL` | Snapshot (`n4 · Pricing`, ≤500 chars) so the record stays readable |
+| `reason` | `TEXT NOT NULL` | 1–1000 chars |
+| `created_by` | `UUID FK → auth.users nullable` | Defaults to `auth.uid()` |
+| `created_at` | `TIMESTAMPTZ` | Creation timestamp |
+
+**RLS:** canvas ownership; **select + insert only**.
+
+---
+
+## 16. context_attachments
+
+The file behind an `attachment` entry. **Table only for now** — there is no storage
+bucket and no safety scan yet, so every row stays `pending` and nothing may read the
+file or hand it to an agent.
+
+| Column | Type | Use |
+|---|---|---|
+| `id` | `UUID PK` | |
+| `entry_id` + `canvas_id` | composite `FK → context_entries (id, canvas_id)` | `ON DELETE CASCADE`. `UNIQUE (entry_id)` = one file per entry in v1 (drop `context_attachments_one_per_entry` to allow several) |
+| `storage_path` | `TEXT NOT NULL` | Object path in a **private** bucket (convention TBD) — never a public URL |
+| `file_name` / `mime_type` / `size_bytes` | `TEXT` / `TEXT` / `BIGINT` | The file chip in the panel |
+| `width` / `height` | `INT nullable` | Images only |
+| `scan_status` | `TEXT NOT NULL DEFAULT 'pending'` | `pending` \| `clean` \| `rejected`. Backend-owned: clients can only insert `pending` and cannot update |
+| `alt_text` | `TEXT nullable` | Screen-reader description |
+| `uploaded_by` | `UUID FK → auth.users nullable` | Defaults to `auth.uid()` |
+| `created_at` | `TIMESTAMPTZ` | |
+
+**RLS:** canvas ownership; **select + insert (as `pending`) only**.
+
+---
+
+## 17. system_config
+
+Global tunables — the spec's bracketed numbers — so they change without a release.
+Keys are listed on the `SystemConfigRow` type in `types/index.ts` (`context.*`, and two
+`edge.*` keys seeded for the "?" feature, whose rule is being redesigned).
+`context.note_max_chars` is live: a trigger on `context_entries` reads it on every
+write. A missing or non-numeric value falls back to the 3000 ceiling.
+
+| Column | Type | Use |
+|---|---|---|
+| `key` | `TEXT PK` | e.g. `context.note_max_chars` |
+| `value` | `JSONB NOT NULL` | Numbers for every current key |
+| `description` | `TEXT nullable` | |
+| `updated_at` | `TIMESTAMPTZ` | Bumped by trigger |
+
+**RLS:** readable by any signed-in user; **no write policy** — only the service role
+(Supabase dashboard / SQL) can change it.
 
 ---
 
@@ -317,8 +404,12 @@ here. Full lifecycle: intervention-layer/05.
 | `decrement_insight_turns(p_insight_id)` | `00004` | Atomic decrement + auto-deactivate on `rejection_insights.turns_remaining` |
 | `append_node_to_sequence(p_session_id, p_node_id)` | `00004` | Atomic array append to `sessions.node_sequence` |
 | `match_nodes(query_embedding, canvas_id_filter, match_threshold, match_count)` | `00005` | pgvector cosine similarity search — used by `semantic_promote` tool |
-| `allocate_session_seq(p_session_id)` | `20260712000001` | Atomic bump + `RETURNING` of `sessions.latest_seq` — the intervention version guard (intervention-layer/06) |
-| `bump_canvas_version()` (trigger fn) | `20260706000001` | Bumps `canvases.canvas_version` on any `nodes`/`edges` mutation — the context fingerprint (intervention-layer/04) |
+| `create_context_entry(p_entry, p_links, p_attachment)` | `20261017000001` | The one atomic write for a note: entry + ≥1 links (+ file row), idempotent on client ids, `SECURITY INVOKER` so RLS applies. `p_links` is a JSON array |
+| `assign_node_seq()` (trigger fn) | `20261016000002` | `BEFORE INSERT` on `nodes` — sets `seq` from `canvases.next_node_seq`; an upsert of an existing id reuses that row's number and burns no counter value |
+| `retire_context_links()` (trigger fn) | `20261016000002` | `AFTER DELETE` on `nodes`/`edges` — sets the deleted component's active `context_links` to `deleted` |
+| `context_entries_before_update()` / `nodes_seq_immutable()` (trigger fns) | `20261016000002` | Bump `updated_at` and freeze `canvas_id`/`source`; freeze `nodes.seq` |
+| `context_entries_check_length()` (trigger fn) | `20261017000001` | Enforces `system_config` `context.note_max_chars` on insert and on every edit of `content` |
+| `touch_updated_at()` (trigger fn) | `20261017000001` | Bumps `updated_at` — used by `context_links` and `system_config` |
 
 ---
 
@@ -335,12 +426,17 @@ auth.users
         ├── rejection_insights    (canvas_id + session_id + thread_id + target_edge_id)
         ├── ai_contributions      (canvas_id + session_id)
         ├── session_learnings     (canvas_id + session_id)
-        ├── intervention_offers   (canvas_id + session_id + trigger_node_id)
+        ├── context_entries       (canvas_id + session_id)
+        │     ├── context_links   (entry_id + canvas_id → target node/edge, no FK)
+        │     └── context_attachments (entry_id + canvas_id, one per entry)
+        ├── component_removals (canvas_id + session_id; component has no FK)
         └── observer_structures   (canvas_id + session_id + thread_id)
               └── observer_edges  (structure_id)
 
 auth.users
   └── subscriptions     (user_id)
+
+(system_config — standalone, no FKs)
 ```
 
 All child tables cascade-delete on `canvases` delete (`ON DELETE CASCADE`).

@@ -1,29 +1,34 @@
 ---
-last-verified: 2026-07-17
-verified-against: intervention-spectrum (judge replaces Orchestrator; decide→wait→generate handshake)
+last-verified: 2026-10-16
+verified-against: pivot — Intervention Spectrum removed; no routing layer in code (agent redesign pending)
 stale-after-days: 30
 ---
 
 # AGENT-PIPELINE.md
 
-> **Load this when:** Creating/modifying agents, Inngest functions, judge routing, Attunement Layer, debounce logic, Redis spawn flow, Rejection Insights Engine, or Multi-Canvas threading.
+> **Load this when:** Creating/modifying agents, Inngest functions, Attunement Layer, Redis spawn flow, Rejection Insights Engine, or Multi-Canvas threading.
 >
-> **See also:** `.ai/context/intervention-layer/` — the main `agent-pipeline.ts`
-> was restructured into the **decide→wait→generate handshake**, and the
-> **Orchestrator was retired in favour of the judge**. The sections below describe
-> the pre-intervention shape; the intervention-layer files describe what shipped.
+> **See also:** `CONTEXT-CAPTURE.md` — user notes attached to nodes/edges/the canvas,
+> which agents are meant to read (not wired yet).
 
 ---
 
-## ⚠ Amended by the intervention layer
+## ⚠ Status: no proactive trigger or router exists (pivot, 2026-10-16)
 
-The `canvas/node.created` debounced pipeline shown below still runs, but the primary
-proactive path is now `canvas/intervention.trigger` → **judge → publish `waiting` →
-`step.waitForEvent` → re-judge-if-changed → generate → show**. The **judge**
-(`src/agents/orchestrator.ts`, exports `runJudge`) folds maturity + single-best
-routing into one call over the full canvas map and **replaces the Orchestrator
-rule-list router** below. Read `.ai/context/intervention-layer/01-trigger-and-handshake.md`
-and `02-the-judge.md` before touching `agent-pipeline.ts`.
+The Intervention Spectrum (judge → `waiting` → consent timer → generate → show) was
+**removed** along with `src/pipeline/agent-pipeline.ts` and
+`src/agents/orchestrator.ts` (the Orchestrator was retired earlier, then the judge
+that replaced it). **Nothing today runs an agent on node creation**: `node.created`
+still enriches the node (summary + embedding) and sends `canvas/node.created`, but
+no Inngest function subscribes to it, so Expander and Stress-Tester have no caller.
+How agents are driven next is an open redesign — do not assume either the
+debounced pipeline or the judge exists.
+
+What **is** implemented: the explicit-edge pipelines (Articulator on a `relate`
+edge between existing nodes, Outer Subconscious on a `question` edge), Session
+Complete (Observer), Rejection Insights, and ghost streaming. The "Full Pipeline
+Flow" below is the original design for the node-triggered path — read it as
+**design history, not current behaviour**.
 
 ---
 
@@ -95,27 +100,19 @@ Inngest worker
 
 ---
 
-## Routing — the judge (replaces the Orchestrator rule list)
+## Routing — none (redesign pending)
 
-The old priority-ordered rule list below is **retired**. Routing for the proactive
-path is now the **judge**: one `thinking:high` call over Attunement + the full
-canvas map returns `{ mature, route, locus_node_ids, headroom, confidence }`. It
-picks the **single best** agent (never a ranked set), enforces tier server-side
-(tier-locked → upgrade offer, never a weaker substitute), and holds silently when
-nothing is mature. Phase gates the two phase-bound agents via a v1 one-way
-`diverging → converging` latch (`maybeAdvancePhase` in `src/db/sessions.ts`). Full
-rubric: `.ai/context/intervention-layer/02-the-judge.md`.
-
-The immediate **explicit-edge** pipelines never used the Orchestrator and are
-unchanged:
+There is no router. The immediate **explicit-edge** pipelines never used one and
+are unchanged:
 
 ```typescript
-edge between existing nodes (both_existing=true, NOT question) → ARTICULATOR (immediate)
-edge_type === 'question'                                        → OUTER_SUBCONSCIOUS (immediate)
+relate edge between existing nodes (both_existing=true) → ARTICULATOR (immediate)
+edge_type === 'question'                                 → OUTER_SUBCONSCIOUS (immediate)
 ```
 
-The Observer remains a content agent (continuous + Session Complete), never a judge
-route.
+Both still call `canAgentFire()` (`src/lib/guards.ts` — blocks while a pending
+ghost already exists for the trigger node). The Observer is a content agent that
+runs only at Session Complete, never a route.
 
 <details><summary>Retired Orchestrator rule list (historical)</summary>
 
