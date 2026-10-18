@@ -25,6 +25,7 @@ Receives canvas events from the frontend, runs the AI agent pipeline, and stream
 
 | Task | Load these files |
 |---|---|
+| Product understanding — what/why/who, status, loopholes, killers; marketing, support, strategy | `.ai/product/README.md` → `00-product-at-a-glance.md` (+ files per its routing table) |
 | Any agent work (create/modify/debug) | `CORE-CONCEPTS.md` + `AGENT-PIPELINE.md` |
 | Intervention — judge, offers, decide→wait→generate, show ruleset, receptivity, Impact Check | `.ai/context/intervention-layer/README.md` (+ the numbered sub-file) |
 | Serialization / thread / context window | `CORE-CONCEPTS.md` + `SERIALIZATION.md` |

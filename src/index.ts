@@ -57,6 +57,7 @@ app.route('/api', canvasEventRoute)
 app.route('/api', streamRoute)
 app.route('/api', ghostStatusRoute)
 app.route('/api', sessionRoute)
+app.route('/api', interventionRoute)
 
 
 serve({ fetch: app.fetch, port: 3001 }, (info) => {
