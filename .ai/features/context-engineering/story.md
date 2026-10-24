@@ -2,141 +2,223 @@
 feature: "context-engineering"
 type: story
 created: 2026-10-24
-status: draft — decisions D1–D9 agreed in conversation; slice 0 not started
+status: draft — decisions agreed in conversation (rev 2); slice 0 not started
 git_branch: "ccr-7bd29be2-xp0ss9"
 pr_url: "[PLACEHOLDER]"
 source_spec: "context-engineering.zip (16 files, README + 01–13 + appendices A/B), supplied 2026-10-21"
 ---
 
 ## What
-Replace today's recency-tiered serializer and navigation tools with one **retrieve → assemble** layer that
-gives every agent the part of the canvas its task needs, in a form that keeps structure (graph + edge labels +
-the user's context notes), logs what was shown, and gives agents one escape hatch (`expand_context`).
+1. Replace today's recency-tiered serializer and navigation tools with one **retrieve → assemble** layer that
+   gives every agent the part of the canvas its task needs, in a form that keeps structure (graph, edge labels,
+   the user's context notes). It logs what was shown and gives agents one escape hatch (`expand_context`).
+2. Replace the fixed **ghost pair** (context node + question node) with a **ghost structure**: the agent returns a
+   set of nodes and edges whose shape follows the content, streamed live in node-edge chunks.
 
 ## Why
-Agents currently see the canvas through a thread-recency lens (serializer/index.ts, ~700 lines) or by choosing
-to call 8 navigation tools — which `neighborhood.ts` records they empirically do not. The spec's design
-(scope × budget routing, graph-first retrieval, stubs, logged runs) fits our problem; its output side and a few
-assumptions do not fit our architecture (see "Conflicts resolved").
+Agents currently see the canvas through a thread-recency lens (`serializer/index.ts`, ~700 lines), or by choosing
+to call 8 navigation tools. `neighborhood.ts` records that they empirically do not call them. The spec's design
+(scope × budget routing, graph-first retrieval, stubs, logged runs) fits our problem. Its output side (direct DB
+writes, Supabase Realtime) and a few assumptions do not fit our architecture; see "Spec conflicts resolved".
 
-## Product decisions (made by the product owner, 2026-10-21 → 10-24)
-- **Agent roster is four:** Expander, Stress-Tester, **General** (new), Observer.
-  **Articulator and Outer Subconscious are removed.**
-- **No edge-triggered agents.** Every run has a focus (a node, a set of nodes, or the whole canvas).
+## Product decisions (product owner, 2026-10-21 → 10-24)
+- **Four agents:** Expander, Stress-Tester, **General** (new), Observer.
+  **Articulator and Outer Subconscious are removed.** No agent is triggered by drawing an edge.
+- **Invocation is a mention, not a button.** The user writes `@expander …`, `@stress_tester …`, `@observer …` or
+  `@general …`. The frontend parses the mention and sends the agent in the request (body field `agent`). There are
+  **no presets**: choosing the agent fixes the scope, except for General.
+- **The Observer gets an invocation endpoint now**, temporary name `POST /api/observer/run` (renamed later). It
+  still also runs at Session Complete.
+- **General agent:** handles requests that are neither "expand this" nor "stress test this", e.g. "compare these
+  two points", "give me more detail on this". It has no stance of its own; it answers using retrieved context.
 - **Edges are labelled, not typed.** The frontend supplies a free-text `edges.label` (≤80 chars). There is no
   edge-type enum, so the spec's per-agent follow/mention/skip policy (file 07) and type-based structural priors
   (file 06 §6.7) are **out of scope**. Direction stays as drawn: `from_node_id` (parent) → `to_node_id` (child).
-- **`edges.edge_type` is dropped** (staged — see Slice 1).
-- **All agents are available on every pricing tier.** `getAvailableAgents()` stops gating by tier. What a paid
-  tier still buys (Rejection Insights, Session Complete learnings) is a separate open question — see Open Questions.
-- **General agent** = the free-text agent. Handles requests that are neither "expand this" nor "stress test
-  this": "compare these two points", "give me more detail on this", "how does X relate to Y". It has no stance of
-  its own; it answers the question using retrieved context.
+- **`edges.edge_type` is dropped** (staged; see Slice 1).
+- **All agents are available on every pricing tier.** What paid tiers buy is deferred to a later discussion.
+- **The ghost pair is removed.** Output is still a ghost (the user accepts or rejects it before it lands), but its
+  shape is decided by the content, not fixed to context + question. Making the shape communicate *what kind* of
+  content it is (e.g. a comparison vs a breakdown) is a **separate later session**; this story only builds the
+  generic node + edge contract.
+- **Streaming stays Redis → SSE**, sent in **node-edge chunks**. A small response may arrive as one chunk; a big one
+  arrives as several, so the user sees structure grow.
 
-## Decisions (D1–D9)
+## Decisions
 | # | Decision |
 |---|---|
-| D1 | **Keep the ghost model** (SpawnDescriptor → Redis → SSE → accept/reject). Adopt the spec's *input* side only. No agent writes to `nodes`/`edges`; no Realtime. Structured multi-node output is a separate future decision (Observer is the precedent). |
-| D2 | **Explicit invocation:** `POST /api/agent/run { canvas_id, session_id, agent, focus_node_ids[], task? }`. Expander/Stress-Tester via presets; General via free text; Observer stays at Session Complete. |
-| D3 | Edges = structure + free-text label. See product decisions above. |
-| D4 | Prompt ids are the user-visible **`n{nodes.seq}`**, not per-run aliases. Stable across runs and matches the user's own notes. The serializer's `seq:N` label is retired with the serializer. |
-| D5 | Scope/intent classification sits behind `classify()` in `src/lib/`, implemented with Gemini structured output (single provider, non-negotiable #12). Jev is not in the repo and is not a dependency; it can be swapped in behind the interface later. |
-| D6 | Replace `serializer/index.ts` tiers and the 8 navigation tools, one agent at a time. `expand_context` is the only retrieval tool. |
-| D7 | New `agent_runs` table (the spec's logging table, trimmed). It *links* to `ai_contributions` (ghost lifecycle) rather than replacing it. |
-| D8 | Preset → agent/scope table lives in one settings module (see Slice 2). |
-| D9 | Thread memory = last N turns across this canvas's agent threads, with accepted/rejected status, read from `agent_threads`. No new `thread_notes` table. |
+| D1 | **Ghost structure over Redis/SSE.** Agents never write to `nodes`/`edges`; the frontend writes accepted ghosts, as today. No Supabase Realtime (non-negotiable #8). |
+| D2 | **One run endpoint** `POST /api/agent/run { canvas_id, session_id, agent, focus_node_ids[], query? }` for expander / stress_tester / general, plus the temporary `POST /api/observer/run`. `agent` comes from the frontend's `@mention` parse; the backend validates it against `AgentRole`. |
+| D3 | Edges = structure + free-text label (above). |
+| D4 | Prompt ids are the user-visible **`n{nodes.seq}`**; new nodes in the output use temp ids `t1, t2, …`. The serializer's `seq:N` label is retired with the serializer. |
+| D5 | Scope classification (General only) sits behind `classify()` in `src/lib/`, implemented with Gemini structured output (single provider, non-negotiable #12). Jev is not in the repo; it can be swapped in behind the interface later. |
+| D6 | Replace the serializer tiers and the 8 navigation tools, one agent at a time. `expand_context` is the only retrieval tool. |
+| D7 | New `agent_runs` table (the spec's logging table, trimmed). It links to `ai_contributions` rather than replacing it. |
+| D8 | Scope by agent: Expander → S1, Stress-Tester → S2, Observer → S3, General → `classify()`. |
+| D9 | Thread memory = last N turns across this canvas's agent threads, with accept/reject outcome, read from `agent_threads`. No new `thread_notes` table. |
+
+## Output contract (replaces SpawnDescriptor + ghost pair)
+The agent returns structure through a schema (AI SDK structured streaming), never free prose with markers:
+
+```ts
+type GhostOutput = {
+  nodes: { temp_id: string /* t1… */; content: string }[]
+  edges: { from: string /* t* | n{seq} */; to: string; label?: string }[]
+}
+```
+
+The backend:
+1. Streams the structured output and **emits a chunk whenever a node and its edges are complete**: the node plus
+   every edge whose endpoints are both already known (existing `n{seq}` or an earlier `t*`). A short answer is
+   one chunk.
+2. **Validates each chunk before publishing** (spec file 09 §9.2, adapted): every `n{seq}` was shown in the prompt;
+   every `t*` is defined; no self-edges or duplicate edges; node cap; every new node has at least one edge. Unknown
+   ids are dropped, never guessed.
+3. **Mints a `ghost_id` (UUID) per temp id** and maps `n{seq}` back to node UUIDs. LLM ids are never sent to the FE.
+4. Publishes over `canvas:stream:${sessionId}`:
+
+| Message | Payload |
+|---|---|
+| `structure_start` | `run_id`, `agent`, `focus_node_ids` (the FE's anchor halos) |
+| `ghost_chunk` | `nodes: [{ ghost_id, content }]`, `edges: [{ from, to, label }]` (from/to are node UUIDs or ghost ids) |
+| `structure_done` | `run_id`, plus the persisted thread turn reference for accept/reject |
+| `structure_error` | `run_id`, reason (validation failed twice, model error) |
+
+Replaces `spawn` / `node_type` / `chunk` / `done`, the `[NODE_TYPE]`/`[QUESTION]` marker router in
+`streaming/tokens.ts`, the 1.5 s spawn-animation sleep, `ContextNodeType` and the `GhostPair` thread turn.
+The Observer's anchors/levels format (`observer_structures`/`observer_edges`) folds into this contract. Its
+level-+1 rule becomes Observer-specific validation.
 
 ## Spec → repo mapping
 | Spec | Ours | Status |
 |---|---|---|
 | canvases.title / goal | `title` / `original_intent` | exists |
-| nodes.title (title tier) | `nodes.summary` + `direction_marker` | exists — no new column |
+| nodes.title (title tier) | `nodes.summary` + `direction_marker` | exists; no new column |
 | nodes.embedding | `VECTOR(3072)` + `match_nodes` RPC (must keep `set_aside_at IS NULL`) | exists |
+| edges.type | — | **out**: labels only |
 | edges.label | `edges.label` | exists |
+| edges.origin / status (suggested edges) | ghosts | not needed: AI edges only reach `edges` once the user accepts |
 | nodes.token_count | — | **add**, computed in `enrichNode` |
-| canvases.token_count_total | — | **not added**; one SUM per run (deletes bypass the backend, a counter would drift) |
+| canvases.token_count_total | — | **not added**: one SUM per run (deletes bypass the backend, so a counter would drift) |
 | canvas_events / recent activity | `sessions.node_sequence` + `nodes.created_at` | derive; no table |
 | thread_notes | `agent_threads.messages` | exists |
 | agent_runs | — | **add** (Slice 2) |
-| edges.origin / status | — | not needed: AI edges only exist after the user accepts a ghost |
+| preset actions | `@mention` → agent | no presets |
 | node type enum | `direction_marker` | exists |
+| output schema (file 09) | ghost structure (above) | adapted: streamed as ghosts, not written to the DB |
+| Realtime delivery (file 09 §9.4) | Redis → SSE | kept ours |
 | canvas summary (file 04) | — | deferred |
-| **context notes** | `context_entries` / `context_links` | **missing from the spec — must be a prompt layer** |
-| **rejection insights** | `rejection_insights` | **missing from the spec — non-negotiable #10** |
-| set-aside nodes | `nodes.set_aside_at` | **missing from the spec — every retrieval read filters it, and any note linked to one** |
+| **context notes** | `context_entries` / `context_links` | **missing from the spec; must be a prompt layer** |
+| **rejection insights** | `rejection_insights` | **missing from the spec; non-negotiable #10** |
+| set-aside nodes | `nodes.set_aside_at` | **missing from the spec; every retrieval read filters it, and any note linked to it** |
 
 ## Prompt layers (ours)
 1. System + agent instructions (constant; non-negotiable #4)
-2. Tools: `expand_context` (+ agent-specific)
+2. Tools: `expand_context`
 3. Canvas intent: `title`, `original_intent`, canvas-level notes (delimited data)
 4. NEGATIVE CONSTRAINTS from active `rejection_insights` (non-negotiable #10)
 5. Thread memory (D9)
-6. Focus node(s), full, with their notes
+6. Focus node(s), full text, with their notes
 7. Loaded nodes by tier (full / summary-as-title / stub) + edges with labels + notes on edges
 8. Not-loaded stubs (`n40 —"needs legal sign-off"→ …`)
-9. Task
-Notes are user data, wrapped in delimiters, read live at assembly (never copied into threads) — see CONTEXT-CAPTURE.md.
+9. Task: the user's query text (after the `@mention`), or the agent's default task when empty
+
+Notes are user data, wrapped in delimiters and read live at assembly (never copied into threads); see
+CONTEXT-CAPTURE.md. The query text is user data too; it never reaches a system prompt.
 
 ## Blast radius
 - **Deleted:** `src/agents/articulator.ts`, `outer-subconscious.ts`; `src/pipeline/articulator-pipeline.ts`,
-  `outer-sub-pipeline.ts`; edge routing in `src/routes/canvas-event.ts`; `serializer/neighborhood.ts` (superseded).
-- **Rewritten:** `serializer/*`, `src/tools/*` (8 → `expand_context`), `lib/tier.ts`, `AgentRole`, `EdgeType`,
-  `SERIALIZATION_RULES`, `Edge` type, `SpawnDescriptor.context_edge/question_edge.edge_type`.
-- **New:** `agent_runs`, `POST /api/agent/run`, `run-agent` Inngest function, `src/context/*` (retrieve, assemble,
-  settings), `classify()`, `nodes.token_count`.
-- **Docs:** CORE-CONCEPTS, AGENT-PIPELINE, SERIALIZATION, DATABASE-SCHEMA, FRONTEND-CONTRACT, LLM-LAYER, CLAUDE.md
-  (run `update-ai-context` per slice).
-- **Frontend (separate repo):** stop writing `edge_type`; send `label`; stop reading `edge_type` from the spawn
-  descriptor; add the agent-run UI; remove Articulator/Outer-Sub affordances (`relate` / `question` edge gestures).
+  `outer-sub-pipeline.ts`; edge routing in `src/routes/canvas-event.ts`; `serializer/neighborhood.ts` (superseded);
+  marker router in `streaming/tokens.ts`; `buildSpawnDescriptor`; ghost-pair status logic in `routes/ghost-status.ts`.
+- **Rewritten:** `serializer/*` → `src/context/*`; `src/tools/*` (8 → `expand_context`); `lib/tier.ts`; `lib/guards.ts`
+  (`canAgentFire` checks pending ghost structures on the focus nodes); `AgentRole`, `EdgeType`, `Edge`, `RedisMessage`,
+  `ThreadMessage`, `ghostStatusSchema`; `pipeline/rejection-insights.ts` (input = rejected ghost structure);
+  `pipeline/session-complete.ts`; `agents/observer.ts`.
+- **New:** `agent_runs`; `POST /api/agent/run`; `POST /api/observer/run` (temporary); `run-agent` Inngest function
+  (concurrency key `canvas_id`, limit 1); `src/context/*` (retrieve, assemble, settings, output stream + validation);
+  `agents/general.ts`; `classify()`; `nodes.token_count`.
+- **Docs:** CORE-CONCEPTS, AGENT-PIPELINE, SERIALIZATION, CANVAS-SYNC, DATABASE-SCHEMA, FRONTEND-CONTRACT,
+  LLM-LAYER, CLAUDE.md non-negotiables #9 and #11 (they name the ghost pair / spawn descriptor). Run
+  `update-ai-context` per slice.
+- **Frontend (separate repo):** `@mention` parsing and the run request; stop writing `edge_type` and send `label`;
+  render the new stream messages; per-ghost accept/reject; remove Articulator/Outer-Sub gestures.
 
 ## Slices
-Each slice is vertical: route → Inngest → retrieve → assemble → agent → ghost stream → log, with tests.
+Each slice is vertical (request → Inngest → retrieve → assemble → agent → ghost stream → accept/reject → log),
+with tests.
 
-**0. Groundwork** — this story; `src/context/settings.ts` (all spec placeholders in one module); confirm base-branch plan.
+**0. Groundwork:** this story; `src/context/settings.ts` (all spec placeholders in one module); base-branch plan.
+
 **1. Removal + `edge_type` staged drop**
-  - 1a: delete the two agents/pipelines/routing/types/docs; `AgentRole` loses two members (exhaustiveness guards
-    will point at every place); `getAvailableAgents` returns all agents.
-  - 1b migration A: `edge_type` → nullable, CHECK dropped; backend stops reading/writing it; spawn descriptor stops
-    sending it (FRONTEND-CONTRACT change — announce).
-  - 1c migration B (**only after the frontend stops sending it**): `DROP COLUMN edge_type`. PostgREST rejects unknown
-    columns, so dropping first breaks every frontend edge insert.
-**2. Expander on a node** — `agent_runs` migration; `POST /api/agent/run`; `run-agent`; S1 retrieval (focus +
-  1-hop + ancestor summaries + notes); layered assembly; `n{seq}` ids; negative constraints; `canAgentFire`.
-  Presets: expand / more examples / reframe → Expander. First caller the Expander has ever had.
-**3. `expand_context`** — one tool (≤2 calls, ≤5 ids, only ids shown in the prompt), logged on the run; replaces the
-  navigation tools for migrated agents.
-**4. Stress-Tester (S2)** — `nodes.token_count` (+ backfill script, like `backfill:enrichment`); budget check;
-  whole-canvas strategy when it fits, otherwise region + stubs.
-**5. General agent** — new `generalAgent` (role `general`); `classify()` → scope S1/S2/S3 with "go one scope
-  deeper when unsure"; focus = 0..n selected nodes (0 = canvas-wide).
-**6. Observer on the shared retriever (S3)** — retire `serializeCanvasMap` and the tier code.
-**7. Eval harness** — 30–50 fixtures with labelled needed-nodes, metrics from spec file 12. Gate for Slice 8.
-**8. Deferred** — skeleton/medium, semantic region, rolling summary, guided traversal, caches (build when real
-  canvases outgrow the whole-canvas strategy; the model context window is ~1M tokens).
+- 1a: delete the two agents, their pipelines, edge routing, types and docs. `AgentRole` loses two members and gains
+  `general` (exhaustiveness guards point at every site). `getAvailableAgents` returns all agents for every tier.
+- 1b, migration A: `edge_type` becomes nullable and its CHECK is dropped; the backend stops reading and writing it.
+- 1c, migration B (**only after the frontend stops sending it**): `DROP COLUMN edge_type`. PostgREST rejects unknown
+  columns, so dropping first breaks every frontend edge insert.
+
+**2. `@expander` end to end:** `agent_runs` migration; `POST /api/agent/run`; `run-agent`; S1 retrieval (focus +
+  1-hop + ancestor summaries + notes); layered assembly with `n{seq}` ids; negative constraints; the **new ghost
+  structure contract** (schema output → chunking → validation → `structure_*` messages → thread turn →
+  accept/reject in `ghost-status`); `canAgentFire`. The Expander's first-ever caller, and the slice that retires
+  the ghost pair.
+
+**3. `@observer` via `POST /api/observer/run`:** whole-canvas retrieval (S3) and the same output contract,
+  replacing `serializeCanvasMap` and the separate observer structure format. Session Complete calls the same path.
+
+**4. Rejection Insights on ghost structures:** reasons attach to a rejected ghost node/structure; insights still
+  inject as NEGATIVE CONSTRAINTS. (Can merge into Slice 2 if the reason UI is unchanged.)
+
+**5. `expand_context`:** one tool (≤2 calls, ≤5 ids, only ids shown in the prompt), logged on the run. Replaces the
+  navigation tools.
+
+**6. `@stress_tester` (S2):** `nodes.token_count` + backfill script (like `backfill:enrichment`); budget check;
+  whole canvas when it fits, otherwise region + stubs.
+
+**7. `@general`:** `agents/general.ts`; `classify()` → S1/S2/S3, going one scope deeper when unsure; focus =
+  0..n selected/mentioned nodes (0 = canvas-wide).
+
+**8. Cleanup:** delete the old serializer, tier code, unused tools and ghost-pair remnants once no agent uses them.
+
+**9. Eval harness:** 30–50 fixtures with labelled needed-nodes; metrics from spec file 12. Gate for Slice 10.
+
+**10. Deferred:** skeleton/medium strategy, semantic region, rolling summary, guided traversal, caches. Build when
+  real canvases outgrow the whole-canvas strategy (the model context window is ~1M tokens).
+
+**Separate session (not in this story):** making the ghost structure's shape tell the user what kind of content
+it is.
 
 ## Risks
-- Dropping `edge_type` breaks the frontend if ordered wrong (Slice 1b/1c).
-- Existing `agent_threads` for the two removed roles become orphaned rows — harmless, leave them.
-- `ai_contributions.agent_role` and `agent_threads.agent_role` are unconstrained TEXT (no CHECK), so no migration
-  is needed for the roster change; confirm against the live DB.
-- Replacing the serializer changes every agent's prompt at once if done carelessly — hence one agent per slice.
-- Context notes are user text inside prompts: injection surface. Keep them delimited, never in the system prompt.
-- Branch base: `ccr-7bd29be2-xp0ss9` = the pivot branch (PR #18, still open, `main` at `cbda6d9`). Everything here
+- Dropping `edge_type` breaks the frontend if the steps run in the wrong order (Slice 1b/1c).
+- The new stream contract is a breaking FRONTEND-CONTRACT change; the frontend repo is not built yet, so announce it
+  before Slice 2 ships rather than versioning it.
+- Structured streaming emits partial objects; a chunk must only be published once its node is final and its edges
+  resolve, or the FE renders half-validated ghosts.
+- Existing `agent_threads` for the two removed roles and existing `ghost_pair` turns become legacy rows. Leave them;
+  readers must tolerate them.
+- `ai_contributions.agent_role` and `agent_threads.agent_role` are unconstrained TEXT, so the roster change needs no
+  migration; confirm against the live DB.
+- Context notes and the query are user text inside prompts, so they are an injection surface. Keep them delimited,
+  never in the system prompt.
+- Branch base: `ccr-7bd29be2-xp0ss9` = the pivot branch (PR #18, still open; `main` at `cbda6d9`). Everything here
   depends on the pivot's schema (`nodes.seq`, `context_*`).
 
 ## Open questions
-1. **General agent output:** assumed a **ghost pair** (context node + optional question), same as the Expander and
-   Stress-Tester. If it should answer in a different form (e.g. a comparison table, multiple nodes), D1 must be revisited.
-2. **What do paid tiers buy now?** Agents are no longer gated. Rejection Insights and Session Complete learnings are
-   currently Pro+ per CORE-CONCEPTS — keep that, or open them up too?
-3. **Presets:** final list and wording of preset actions per agent (Slice 2 needs only the Expander's).
-4. **Spec numbers** (budget thresholds, k values, similarity floors) start at the spec's placeholders and are tuned by Slice 7.
-5. Whether the Observer should also accept an explicit user invocation, or stay Session-Complete-only.
+1. **Accept/reject granularity:** per ghost node, per edge (as the Observer was designed), or both? This decides the
+   `ghost-status` payload and what Rejection Insights learns from.
+2. **Rejection reasons:** keep `too_abstract` / `too_technical` / `skip_for_now` for the new ghosts, or change them?
+3. **No mention:** does a message without `@agent` go to General, or does nothing run?
+4. **Node cap per response** (spec placeholder 7) and the chunk threshold for "small → all at once".
+5. **Concurrent runs:** may the user invoke a second agent on the same focus node while ghosts from the first are
+   still pending? (Today `canAgentFire` blocks it.)
+6. **Paid tiers:** deferred.
 
 ## Test plan
-- Unit: scope/preset map; assembly layer order and token accounting; `n{seq}` id mapping (and rejection of unknown ids);
-  note visibility rule (deleted note / deleted link / set-aside node / unscanned attachment never appear);
-  negative constraints always present; `getAvailableAgents` returns every agent for every tier.
-- Integration (fixture canvases): hub node with >25 neighbours; empty node; node with notes on node, edge and canvas;
-  set-aside neighbour; canvas at exactly the budget boundary.
-- Slice 1: migration A applies to a DB with existing `question`/`relate` rows; frontend-style insert without `edge_type` succeeds.
+- Unit: agent → scope map; assembly layer order and token accounting; `n{seq}` ↔ UUID mapping; output validation
+  (unknown id, self-edge, duplicate, orphan node, cap); the chunker (a node is emitted only when its edges resolve;
+  a small output is one chunk); note visibility (a deleted note, deleted link, set-aside node or unscanned
+  attachment never appears); negative constraints always present; `getAvailableAgents` returns every agent for
+  every tier.
+- Integration (fixture canvases): hub node with >25 neighbours; empty node; notes on node, edge and canvas; a
+  set-aside neighbour; a canvas at exactly the budget boundary; a model output that fails validation twice →
+  `structure_error`, nothing persisted.
+- Slice 1: migration A applies to a DB with existing `question`/`relate` rows; a frontend-style edge insert without
+  `edge_type` succeeds.
