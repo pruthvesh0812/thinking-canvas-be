@@ -241,10 +241,16 @@ it is.
 ## Open questions
 1. **Accept/reject granularity — decided 2026-10-26:** accept is **per node**. Ghost nodes carry `depth`; the frontend
    shows depth 1 first and reveals deeper levels on click (everything is already generated, no extra call).
-   **Rejecting a node asks the user: delete its whole subtree, or keep the subtree hanging for later use.** Still to
-   pin down when `ghost-status` is built: what "hanging for later use" means (stays as pending ghosts? re-attached to
-   what, since its parent is gone?), what happens to a hidden child of an accepted node, and the `ghost-status`
-   payload (a node id + `reject_scope: 'node' | 'subtree'`).
+   - **Reject a node** → the user chooses: delete its whole subtree, or **keep the subtree "saved off"**. Saved-off
+     nodes are no longer connected to anything (their parent is gone). The user may still pick any of them
+     individually and accept it; it lands on the canvas **unconnected**, and the user draws edges by hand if wanted.
+   - **Hidden children of an accepted node stay pending** until the user acts on them.
+   - **Rejection Insights learn only from nodes the user actually rejected**: the rejected node, plus any subtree node
+     the user separately rejects. Children that were deleted or saved off with it were never judged, so they teach
+     nothing.
+   - To settle when `ghost-status` is built: the payload (a node id + `reject_scope: 'node' | 'subtree'` +
+     `subtree_action: 'delete' | 'save_off'`) and where saved-off ghosts live (the thread's `ghost_structure` turn keeps
+     them with a per-node status; no new table unless they must outlive the thread).
 2. **Response sizing and chunk threshold:** deferred (no cap for now).
 3. **Paid tiers:** deferred.
 
