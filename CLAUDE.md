@@ -223,6 +223,8 @@ started** — `FRONTEND-CONTRACT.md` is its build-against contract.
 | Anything that makes agents run on node creation (Expander / Stress-Tester have no caller), plus how agents consume context notes | Pending the agent redesign — see **Pivot** below |
 | `ignored` ghost status, `updatePhase` (uncalled), `carry_forward_ids` handling | Referenced in context docs; see `FRONTEND-CONTRACT.md` §10–11 |
 
+**Next build (2026-10-25) — context engineering.** Agent context, output and roster are being redesigned. Start at `.ai/features/context-engineering/HANDOFF.md`; `story.md` there is the source of truth and overrides older docs where they conflict.
+
 **Pivot (2026-10-16) — text-only context capture.** The **Intervention Spectrum
 was removed** (judge, offers, consent timer, `waiting`/`offer`/`withdraw`,
 Impact Check, receptivity, `canvas_version`/`latest_seq`) — it is no longer part
