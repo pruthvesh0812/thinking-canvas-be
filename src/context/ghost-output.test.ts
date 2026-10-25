@@ -44,43 +44,85 @@ describe('createNodeEmitter', () => {
 })
 
 describe('createGhostChunkBuilder', () => {
-  const node = (temp_id: string, links: object[], content = 'some text') => ({ temp_id, content, links })
+  const node = (temp_id: string, links: object[], extra: object = {}) =>
+    ({ kind: 'node', temp_id, content: 'some text', links, ...extra })
+  const frame = (temp_id: string, content = 'how these relate') => ({ kind: 'frame', temp_id, content })
 
-  it('builds a chunk and swaps n-labels for uuids', () => {
+  it('single: one node linked from an existing node, n-label swapped for uuid', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const { chunk, problems } = builder.addNode(
-      node('t1', [{ other: 'n1', direction: 'from', label: ' because ' }]),
+    const { chunk, problems } = builder.addElement(
+      node('t1', [{ target: 'n1', direction: 'FROM', label: ' because ' }]),
     )
     expect(problems).toEqual([])
     expect(chunk!.nodes).toHaveLength(1)
-    // direction "from": existing node -> new node
+    expect(chunk!.frames).toEqual([])
+    expect(chunk!.nodes[0].frame_id).toBeNull()
     expect(chunk!.edges).toEqual([{ from: 'uuid-1', to: chunk!.nodes[0].ghost_id, label: 'because' }])
   })
 
-  it('direction "to" points from the new node to the other', () => {
+  it('direction TO points from the new node to the other', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const { chunk } = builder.addNode(node('t1', [{ other: 'n5', direction: 'to' }]))
+    const { chunk } = builder.addElement(node('t1', [{ target: 'n5', direction: 'TO' }]))
     expect(chunk!.edges[0]).toEqual({ from: chunk!.nodes[0].ghost_id, to: 'uuid-5', label: null })
   })
 
-  it('a later node can link to an earlier accepted one', () => {
+  it('multi in a frame: frame is sent once, with the first node inside it', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const first = builder.addNode(node('t1', [{ other: 'n1', direction: 'from' }])).chunk!
-    const second = builder.addNode(node('t2', [{ other: 't1', direction: 'from' }])).chunk!
+    expect(builder.addElement(frame('f1'))).toEqual({ chunk: null, problems: [] })
+
+    const first = builder.addElement(node('t1', [{ target: 'n1', direction: 'FROM' }], { frame_id: 'f1' })).chunk!
+    const second = builder.addElement(node('t2', [{ target: 'n1', direction: 'FROM' }], { frame_id: 'f1' })).chunk!
+
+    expect(first.frames).toHaveLength(1)
+    expect(second.frames).toEqual([])
+    // both nodes point at the same frame
+    expect(first.nodes[0].frame_id).toBe(first.frames[0].ghost_id)
+    expect(second.nodes[0].frame_id).toBe(first.frames[0].ghost_id)
+    expect(builder.accepted().frames).toHaveLength(1)
+  })
+
+  it('a frame with no nodes is never sent', () => {
+    const builder = createGhostChunkBuilder(idMap)
+    builder.addElement(frame('f1'))
+    expect(builder.accepted().frames).toEqual([])
+  })
+
+  it('unknown frame is not fatal: the node stands free and a problem is noted', () => {
+    const builder = createGhostChunkBuilder(idMap)
+    const { chunk, problems } = builder.addElement(node('t1', [{ target: 'n1', direction: 'FROM' }], { frame_id: 'f9' }))
+    expect(chunk!.nodes[0].frame_id).toBeNull()
+    expect(problems.join(' ')).toMatch(/unknown frame f9/)
+  })
+
+  it('hierarchy: a later node links FROM an earlier accepted one', () => {
+    const builder = createGhostChunkBuilder(idMap)
+    const first = builder.addElement(node('t1', [{ target: 'n1', direction: 'FROM' }])).chunk!
+    const second = builder.addElement(node('t2', [{ target: 't1', direction: 'FROM' }])).chunk!
     expect(second.edges[0].from).toBe(first.nodes[0].ghost_id)
+  })
+
+  it('converge: one node with two FROM links gets two edges', () => {
+    const builder = createGhostChunkBuilder(idMap)
+    builder.addElement(node('t1', [{ target: 'n1', direction: 'FROM' }]))
+    builder.addElement(node('t2', [{ target: 'n1', direction: 'FROM' }]))
+    const { chunk } = builder.addElement(
+      node('t3', [{ target: 't1', direction: 'FROM' }, { target: 't2', direction: 'FROM' }]),
+    )
+    expect(chunk!.edges).toHaveLength(2)
+    expect(chunk!.edges[0].to).toBe(chunk!.edges[1].to)
   })
 
   it('drops unknown ids instead of guessing; node with no valid link is dropped', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const { chunk, problems } = builder.addNode(node('t1', [{ other: 'n99', direction: 'from' }]))
+    const { chunk, problems } = builder.addElement(node('t1', [{ target: 'n99', direction: 'FROM' }]))
     expect(chunk).toBeNull()
     expect(problems.join(' ')).toMatch(/unknown id n99/)
   })
 
   it('keeps the good links when only some are bad', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const { chunk, problems } = builder.addNode(
-      node('t1', [{ other: 'n99', direction: 'from' }, { other: 'n1', direction: 'from' }]),
+    const { chunk, problems } = builder.addElement(
+      node('t1', [{ target: 'n99', direction: 'FROM' }, { target: 'n1', direction: 'FROM' }]),
     )
     expect(chunk!.edges).toHaveLength(1)
     expect(problems).toHaveLength(1)
@@ -88,36 +130,37 @@ describe('createGhostChunkBuilder', () => {
 
   it('drops self links, duplicate edges and reused temp ids', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const dup = builder.addNode(
+    const dup = builder.addElement(
       node('t1', [
-        { other: 't1', direction: 'from' },
-        { other: 'n1', direction: 'from' },
-        { other: 'n1', direction: 'from' },
+        { target: 't1', direction: 'FROM' },
+        { target: 'n1', direction: 'FROM' },
+        { target: 'n1', direction: 'FROM' },
       ]),
     )
     expect(dup.chunk!.edges).toHaveLength(1)
     expect(dup.problems).toHaveLength(2)
 
-    const reused = builder.addNode(node('t1', [{ other: 'n1', direction: 'from' }]))
-    expect(reused.chunk).toBeNull()
+    expect(builder.addElement(node('t1', [{ target: 'n1', direction: 'FROM' }])).chunk).toBeNull()
+    expect(builder.addElement(frame('f1')).problems).toEqual([])
+    expect(builder.addElement(frame('f1')).problems).toHaveLength(1)
   })
 
   it('a dropped node can not be linked to later', () => {
     const builder = createGhostChunkBuilder(idMap)
-    builder.addNode(node('t1', [])) // orphan, dropped
-    const { chunk } = builder.addNode(node('t2', [{ other: 't1', direction: 'from' }]))
-    expect(chunk).toBeNull()
+    builder.addElement(node('t1', [])) // orphan, dropped
+    expect(builder.addElement(node('t2', [{ target: 't1', direction: 'FROM' }])).chunk).toBeNull()
   })
 
-  it('rejects a node with the wrong shape', () => {
+  it('rejects an element with the wrong shape', () => {
     const builder = createGhostChunkBuilder(idMap)
-    expect(builder.addNode({ temp_id: 'x', content: '', links: [] }).chunk).toBeNull()
+    expect(builder.addElement({ kind: 'node', temp_id: 'x', content: '', links: [] }).chunk).toBeNull()
+    expect(builder.addElement({ kind: 'banana' }).chunk).toBeNull()
   })
 
   it('accepted() collects every chunk in order', () => {
     const builder = createGhostChunkBuilder(idMap)
-    builder.addNode(node('t1', [{ other: 'n1', direction: 'from' }]))
-    builder.addNode(node('t2', [{ other: 't1', direction: 'to' }]))
+    builder.addElement(node('t1', [{ target: 'n1', direction: 'FROM' }]))
+    builder.addElement(node('t2', [{ target: 't1', direction: 'TO' }]))
     expect(builder.accepted().nodes).toHaveLength(2)
     expect(builder.accepted().edges).toHaveLength(2)
   })

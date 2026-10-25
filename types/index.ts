@@ -295,8 +295,7 @@ export type ThreadMessage =
       ghost_structure: {
         run_id: string
         focus_node_ids: string[]
-        nodes: GhostNode[]
-        edges: GhostEdge[]
+        structure: GhostStructure
         status: 'pending' | 'accepted' | 'rejected'
       }
       timestamp: string
@@ -442,16 +441,26 @@ export type AgentRun = {
   finished_at: string | null
 }
 
-// What the model returns. Ids: an EXISTING node is written n{seq} (the number the
-// user sees), a NEW node gets a temp id t1, t2, ... The model never sees UUIDs.
-export type GhostOutput = {
-  nodes: { temp_id: string; content: string }[]
-  edges: { from: string; to: string; label?: string }[]
-}
+// What the frontend gets. All ids are real: node UUIDs, or ghost ids minted by the backend.
+// (The model never sees these. It writes n5 / t1 / f1, see src/context/ghost-output.ts.)
 
-// What the frontend gets. All ids are real: node UUIDs or backend-minted ghost ids.
-export type GhostNode = { ghost_id: string; content: string }
+// A frame is a box drawn around several ghost nodes. Its text explains how the nodes
+// inside relate, or gives context about them. It has no edges of its own: the edges go
+// from the existing node to the ghost nodes inside.
+export type GhostFrame = { ghost_id: string; content: string }
+
+// frame_id = the frame this node sits in (null = free standing).
+export type GhostNode = { ghost_id: string; content: string; frame_id: string | null }
+
+// from / to are node UUIDs or ghost node ids.
 export type GhostEdge = { from: string; to: string; label: string | null }
+
+// A whole proposal. Streamed in pieces, saved whole on the thread when the run ends.
+export type GhostStructure = {
+  frames: GhostFrame[]
+  nodes: GhostNode[]
+  edges: GhostEdge[]
+}
 
 // ─────────────────────────────────────────────
 // Streaming types
@@ -494,7 +503,7 @@ export type SpawnDescriptor = {
 export type RedisMessage =
   // ── New ghost-structure stream (agents built on src/context/*) ──
   | { type: 'structure_start'; run_id: string; agent: AgentRole; focus_node_ids: string[] }
-  | { type: 'ghost_chunk'; run_id: string; nodes: GhostNode[]; edges: GhostEdge[] }
+  | { type: 'ghost_chunk'; run_id: string; frames: GhostFrame[]; nodes: GhostNode[]; edges: GhostEdge[] }
   | { type: 'structure_done'; run_id: string; thread_id: string; turn_index: number }
   | { type: 'structure_error'; run_id: string; reason: string }
   // ── Old ghost-pair stream (Observer only, until Slice 3) ──
