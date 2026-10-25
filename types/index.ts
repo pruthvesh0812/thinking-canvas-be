@@ -287,6 +287,21 @@ export type ThreadMessage =
       timestamp: string
     }
   | {
+      // A finished ghost structure from one agent run. The nodes/edges are stored so
+      // the thread knows what was proposed; the user's accept/reject is recorded on it.
+      role: 'assistant'
+      turn_type: 'ghost_structure'
+      content: string          // short text of the proposal, for prose context only
+      ghost_structure: {
+        run_id: string
+        focus_node_ids: string[]
+        nodes: GhostNode[]
+        edges: GhostEdge[]
+        status: 'pending' | 'accepted' | 'rejected'
+      }
+      timestamp: string
+    }
+  | {
       // The Observer never writes a ghost pair — this turn just points at the
       // structure it produced. Per-edge outcomes are read live from
       // observer_structures/observer_edges at serialize time, never cached
@@ -398,6 +413,47 @@ export type RejectionInsight = {
 }
 
 // ─────────────────────────────────────────────
+// Agent runs + ghost structures (context-engineering Slice 2)
+// ─────────────────────────────────────────────
+// A run = one agent invocation. Agents never write nodes/edges: they return a
+// "ghost structure" (new nodes + edges). Nothing lands on the canvas until the
+// user accepts it.
+
+export type AgentRunStatus = 'queued' | 'running' | 'done' | 'failed'
+
+// Which row holds the text that invoked the agent (e.g. "@expander dig into this").
+export type AgentRunSourceType = 'context_entry' | 'node'
+
+export type ContextScope = 'S1' | 'S2' | 'S3'
+
+export type AgentRun = {
+  id: string
+  canvas_id: string
+  session_id: string | null
+  agent: AgentRole
+  focus_node_ids: string[]
+  source_type: AgentRunSourceType
+  source_id: string
+  status: AgentRunStatus
+  scope: ContextScope | null
+  error: string | null
+  thread_id: string | null
+  created_at: string
+  finished_at: string | null
+}
+
+// What the model returns. Ids: an EXISTING node is written n{seq} (the number the
+// user sees), a NEW node gets a temp id t1, t2, ... The model never sees UUIDs.
+export type GhostOutput = {
+  nodes: { temp_id: string; content: string }[]
+  edges: { from: string; to: string; label?: string }[]
+}
+
+// What the frontend gets. All ids are real: node UUIDs or backend-minted ghost ids.
+export type GhostNode = { ghost_id: string; content: string }
+export type GhostEdge = { from: string; to: string; label: string | null }
+
+// ─────────────────────────────────────────────
 // Streaming types
 // ─────────────────────────────────────────────
 
@@ -436,6 +492,12 @@ export type SpawnDescriptor = {
 }
 
 export type RedisMessage =
+  // ── New ghost-structure stream (agents built on src/context/*) ──
+  | { type: 'structure_start'; run_id: string; agent: AgentRole; focus_node_ids: string[] }
+  | { type: 'ghost_chunk'; run_id: string; nodes: GhostNode[]; edges: GhostEdge[] }
+  | { type: 'structure_done'; run_id: string; thread_id: string; turn_index: number }
+  | { type: 'structure_error'; run_id: string; reason: string }
+  // ── Old ghost-pair stream (Observer only, until Slice 3) ──
   | { type: 'spawn'; descriptor: SpawnDescriptor }
   | { type: 'chunk'; target: string; data: string }  // target = ghost_id
   // Server-side marker split: the token layer strips the agent's [NODE_TYPE: x]
@@ -548,6 +610,23 @@ export const canvasEventSchema = z
   )
 
 export type CanvasEvent = z.infer<typeof canvasEventSchema>
+
+// POST /api/agent/run
+// The frontend detected "@expander ..." (etc.) in a node's text or a context entry
+// and asks the backend to run that agent. `source` is the row that holds the text;
+// the backend reads it live (never trusts text from the request body).
+export const agentRunRequestSchema = z.object({
+  canvas_id: z.string().uuid(),
+  session_id: z.string().uuid(),
+  agent: z.enum(['expander', 'stress_tester', 'general']),
+  focus_node_ids: z.array(z.string().uuid()),
+  source: z.object({
+    type: z.enum(['context_entry', 'node']),
+    id: z.string().uuid(),
+  }),
+})
+
+export type AgentRunRequest = z.infer<typeof agentRunRequestSchema>
 
 // POST /api/ghost-status
 export const ghostStatusSchema = z.object({

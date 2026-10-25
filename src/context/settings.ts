@@ -2,9 +2,10 @@
 // Defaults from spec file 13 §13.3, minus what the story removed (summary, Jev, traversal,
 // node cap). See .ai/features/context-engineering/story.md. Constants only, no behaviour.
 
+import type { ContextScope } from '../../types/index.js'
+
 // Retrieval scopes (D8): S1 = focus node(s) only, S2 = focus + neighbours + semantic hits,
 // S3 = whole canvas. 'classify' = General agent picks one at run time via classify().
-export type ContextScope = 'S1' | 'S2' | 'S3'
 
 // Agents in the new roster. 'general' is not yet in AgentRole (types/index.ts) — added with Slice 1+.
 export type ContextAgent = 'expander' | 'stress_tester' | 'observer' | 'general'
