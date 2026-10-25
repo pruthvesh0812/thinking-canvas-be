@@ -2,7 +2,7 @@
 feature: "context-engineering"
 type: story
 created: 2026-10-24
-status: draft — decisions agreed in conversation (rev 3); slice 0 not started
+status: draft — decisions agreed in conversation (rev 4); slice 0 not started
 git_branch: "ccr-7bd29be2-xp0ss9"
 pr_url: "[PLACEHOLDER]"
 source_spec: "context-engineering.zip (16 files, README + 01–13 + appendices A/B), supplied 2026-10-21"
@@ -24,13 +24,15 @@ writes, Supabase Realtime) and a few assumptions do not fit our architecture; se
 ## Product decisions (product owner, 2026-10-21 → 10-24)
 - **Four agents:** Expander, Stress-Tester, **General** (new), Observer.
   **Articulator and Outer Subconscious are removed.** No agent is triggered by drawing an edge.
-- **Invocation is a mention, not a button.** The user writes `@expander …`, `@stress_tester …`, `@observer …` or
-  **`@agent …`** (the General agent's mention; its internal role name stays `general`). The frontend parses the
-  mention and sends the agent in the request (body field `agent`). There are **no presets**: choosing the agent
-  fixes the scope, except for General.
-- **A message with no `@mention` is not an agent call.** It is context: it reaches agents only when a later run
-  retrieves it. Working assumption: such a message *is* a context note (`context_entries`, already built and already
-  a prompt layer); see Open Questions #1.
+- **Invocation is written text, not a button.** The user addresses an agent in what they write: `@expander`,
+  `@stress_tester`, `@observer`, or `@agent` (the General agent; internal role name stays `general`). The backend
+  has **no mention concept**: the frontend works out which agent was addressed and sends it as `agent` in the
+  request. There are **no presets**: choosing the agent fixes the scope, except for General.
+- **There is no separate message store.** What the user writes, including the text that invokes an agent, is either
+  a **context entry** (`context_entries` + `context_links`) or a **node's own text**. The run request points at that
+  row; the backend reads the task text live from it, and later runs see it like any other context.
+- **Text that addresses no agent is not an agent call.** It is context, and reaches agents only when a later run
+  retrieves it.
 - **Different agents may run at the same time** on the same focus; **the same agent may not** run twice on the same
   focus while its previous run is in progress or its ghosts are still pending.
 - **The Observer gets an invocation endpoint now**, temporary name `POST /api/observer/run` (renamed later). It
@@ -57,7 +59,7 @@ writes, Supabase Realtime) and a few assumptions do not fit our architecture; se
 | # | Decision |
 |---|---|
 | D1 | **Ghost structure over Redis/SSE.** Agents never write to `nodes`/`edges`; the frontend writes accepted ghosts, as today. No Supabase Realtime (non-negotiable #8). |
-| D2 | **One run endpoint** `POST /api/agent/run { canvas_id, session_id, agent, focus_node_ids[], query? }` for expander / stress_tester / general, plus the temporary `POST /api/observer/run`. `agent` comes from the frontend's `@mention` parse; the backend validates it against `AgentRole`. |
+| D2 | **One run endpoint** `POST /api/agent/run { canvas_id, session_id, agent, focus_node_ids[], source: { type: 'context_entry' \| 'node', id } }` for expander / stress_tester / general, plus the temporary `POST /api/observer/run` (same body). `source` is the row holding the invoking text; the backend reads it live (it must belong to the canvas and be visible under the context visibility rule) and validates `agent` against `AgentRole`. |
 | D3 | Edges = structure + free-text label (above). |
 | D4 | Prompt ids are the user-visible **`n{nodes.seq}`**; new nodes in the output use temp ids `t1, t2, …`. The serializer's `seq:N` label is retired with the serializer. |
 | D5 | Scope classification (General only) sits behind `classify()` in `src/lib/`, implemented with Gemini structured output (single provider, non-negotiable #12). Jev is not in the repo; it can be swapped in behind the interface later. |
@@ -112,7 +114,7 @@ level-+1 rule becomes Observer-specific validation.
 | canvas_events / recent activity | `sessions.node_sequence` + `nodes.created_at` | derive; no table |
 | thread_notes | `agent_threads.messages` | exists |
 | agent_runs | — | **add** (Slice 2) |
-| preset actions | `@mention` → agent | no presets |
+| preset actions | agent chosen in the user's text | no presets |
 | node type enum | `direction_marker` | exists |
 | output schema (file 09) | ghost structure (above) | adapted: streamed as ghosts, not written to the DB |
 | Realtime delivery (file 09 §9.4) | Redis → SSE | kept ours |
@@ -130,10 +132,11 @@ level-+1 rule becomes Observer-specific validation.
 6. Focus node(s), full text, with their notes
 7. Loaded nodes by tier (full / summary-as-title / stub) + edges with labels + notes on edges
 8. Not-loaded stubs (`n40 —"needs legal sign-off"→ …`)
-9. Task: the user's query text (after the `@mention`), or the agent's default task when empty
+9. Task: the text of the `source` row (context entry or node), or the agent's default task when it adds nothing.
+   That row is shown here only, not again in the notes layers.
 
 Notes are user data, wrapped in delimiters and read live at assembly (never copied into threads); see
-CONTEXT-CAPTURE.md. The query text is user data too; it never reaches a system prompt.
+CONTEXT-CAPTURE.md. The task text is user data too; it never reaches a system prompt.
 
 ## Blast radius
 - **Deleted:** `src/agents/articulator.ts`, `outer-subconscious.ts`; `src/pipeline/articulator-pipeline.ts`,
@@ -151,7 +154,7 @@ CONTEXT-CAPTURE.md. The query text is user data too; it never reaches a system p
 - **Docs:** CORE-CONCEPTS, AGENT-PIPELINE, SERIALIZATION, CANVAS-SYNC, DATABASE-SCHEMA, FRONTEND-CONTRACT,
   LLM-LAYER, CLAUDE.md non-negotiables #9 and #11 (they name the ghost pair / spawn descriptor). Run
   `update-ai-context` per slice.
-- **Frontend (separate repo):** `@mention` parsing and the run request; stop writing `edge_type` and send `label`;
+- **Frontend (separate repo):** detect which agent the user's text addresses and send the run request with its `source`; stop writing `edge_type` and send `label`;
   render the new stream messages; per-ghost accept/reject; remove Articulator/Outer-Sub gestures.
 
 ## Slices
@@ -178,8 +181,8 @@ with tests.
 
 **4. Rejection Insights on ghost structures:** migration: `rejection_insights.rejection_reason` becomes free
   nullable text (CHECK and the category XOR dropped; `connection_feedback` folds into it). The engine derives severity
-  and insight points from the user's text; a null reason is recorded as an outcome but generates no NEGATIVE
-  CONSTRAINT (working assumption, Open Questions #3). Insights still inject as NEGATIVE CONSTRAINTS.
+  and insight points from the user's text. **A null reason is recorded as an outcome but generates no NEGATIVE
+  CONSTRAINT** (decided). Insights still inject as NEGATIVE CONSTRAINTS.
 
 **5. `expand_context`:** one tool (≤2 calls, ≤5 ids, only ids shown in the prompt), logged on the run. Replaces the
   navigation tools.
@@ -188,7 +191,7 @@ with tests.
   whole canvas when it fits, otherwise region + stubs.
 
 **7. `@agent` (General):** `agents/general.ts`; `classify()` → S1/S2/S3, going one scope deeper when unsure; focus =
-  0..n selected/mentioned nodes (0 = canvas-wide).
+  0..n selected/addressed nodes (0 = canvas-wide).
 
 **8. Cleanup:** delete the old serializer, tier code, unused tools and ghost-pair remnants once no agent uses them.
 
@@ -210,21 +213,16 @@ it is.
   readers must tolerate them.
 - `ai_contributions.agent_role` and `agent_threads.agent_role` are unconstrained TEXT, so the roster change needs no
   migration; confirm against the live DB.
-- Context notes and the query are user text inside prompts, so they are an injection surface. Keep them delimited,
+- Context notes and the task text are user text inside prompts, so they are an injection surface. Keep them delimited,
   never in the system prompt.
 - Branch base: `ccr-7bd29be2-xp0ss9` = the pivot branch (PR #18, still open; `main` at `cbda6d9`). Everything here
   depends on the pivot's schema (`nodes.seq`, `context_*`).
 
 ## Open questions
-1. **Where messages live.** Assumed: a message with no `@mention` is a context note (`context_entries` +
-   `context_links`, written by the FE as today). Is the `@mention` message itself also saved as a note (so later
-   runs see what was asked), or only on `agent_runs.query`?
-2. **Accept/reject granularity:** per ghost node, per edge (as the Observer was designed), or both? This decides the
-   `ghost-status` payload and what a rejection reason is attached to.
-3. **Null rejection reason:** assumed it is recorded but produces no NEGATIVE CONSTRAINT. Or should the engine still
-   infer a constraint from the rejected content alone?
-4. **Response sizing and chunk threshold:** deferred to a later discussion (no cap for now).
-5. **Paid tiers:** deferred.
+1. **Accept/reject granularity:** per ghost node, per edge, or both. Deferred to a later discussion; Slices 2 and 4
+   need it settled before the `ghost-status` payload is final.
+2. **Response sizing and chunk threshold:** deferred (no cap for now).
+3. **Paid tiers:** deferred.
 
 ## Test plan
 - Unit: agent → scope map; assembly layer order and token accounting; `n{seq}` ↔ UUID mapping; output validation
