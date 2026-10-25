@@ -182,53 +182,21 @@ canvasEventRoute.post('/canvas-event', async (c) => {
     }
 
     // event_type === 'edge.created'
-    // Edge routing turns on edge_type, NOT merely on "both ends exist":
-    //   question              → Outer Subconscious (immediate), as before.
-    //   relate + both_existing → Articulator (immediate). This is the ONLY
-    //     edge that asks for an articulation. It replaces the old "any edge
-    //     between two existing nodes fires the Articulator" rule, which
-    //     ambushed the user with a ghost every time they merely rearranged
-    //     their thinking.
-    //   new-node edge (one end didn't exist) → node.created (debounced), as
-    //     before — the new node sits at the edge's `to` end.
-    //   anything else (a logical/doubt/associative edge between two existing
-    //     nodes) → NO immediate agent. The edge is already persisted and agents
-    //     read the canvas live, so it is picked up on their next run.
+    // The edge is already persisted and agents read the canvas live, so an edge between
+    // two existing nodes triggers nothing. A new-node edge (one end did not previously
+    // exist) is in effect a node creation — the new node sits at the edge's `to` end —
+    // and goes through the main debounced pipeline.
     const edge = await getEdge(parsed.data.edge_id!)
 
-    if (edge.edge_type === 'question') {
-      await inngest.send({
-        name: 'canvas/edge.question',
-        data: { canvas_id, session_id, edge_id: edge.id, from_node_id: edge.from_node_id },
-      })
-      logger.info('[route:canvas-event] edge.question fired', { canvas_id, session_id, edge_id: edge.id })
-    } else if (edge.edge_type === 'relate' && edge.both_existing) {
-      await inngest.send({
-        name: 'canvas/edge.existing-nodes',
-        data: {
-          canvas_id,
-          session_id,
-          edge_id: edge.id,
-          from_node_id: edge.from_node_id,
-          to_node_id: edge.to_node_id,
-        },
-      })
-      logger.info('[route:canvas-event] relate edge → articulator fired', { canvas_id, session_id, edge_id: edge.id })
-    } else if (!edge.both_existing) {
-      // A new-node edge (one end did not previously exist) is, in effect, a node
-      // creation — the new node sits at the edge's `to` end. Route it through the
-      // main debounced pipeline.
+    if (!edge.both_existing) {
       await inngest.send({
         name: 'canvas/node.created',
         data: { canvas_id, session_id, node_id: edge.to_node_id },
       })
       logger.info('[route:canvas-event] new-node edge → node.created', { canvas_id, session_id, edge_id: edge.id })
     } else {
-      // A structural edge (logical / doubt / associative) between two existing
-      // nodes: no immediate agent. The FE has already written it, so the next
-      // agent run sees the new topology on its own.
-      logger.info('[route:canvas-event] structural edge — no immediate trigger', {
-        canvas_id, session_id, edge_id: edge.id, edge_type: edge.edge_type,
+      logger.info('[route:canvas-event] edge between existing nodes — no trigger', {
+        canvas_id, session_id, edge_id: edge.id,
       })
     }
 

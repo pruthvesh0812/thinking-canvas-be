@@ -54,8 +54,6 @@ thinking-canvas-api/
 │   │   ├── expander.ts
 │   │   ├── stress-tester.ts
 │   │   ├── observer.ts
-│   │   ├── outer-subconscious.ts
-│   │   ├── articulator.ts
 │   │   └── attunement.ts
 │   ├── tools/              # Cursor tools
 │   │   ├── get-content.ts
@@ -67,8 +65,6 @@ thinking-canvas-api/
 │   │   ├── get-branch.ts
 │   │   └── semantic-promote.ts
 │   ├── pipeline/           # Inngest functions
-│   │   ├── articulator-pipeline.ts # immediate on existing-node edge
-│   │   ├── outer-sub-pipeline.ts   # immediate on question edge
 │   │   ├── rejection-insights.ts   # immediate on ghost rejection
 │   │   └── session-complete.ts     # on Session Complete
 │   ├── serializer/
@@ -233,8 +229,8 @@ of the product, as of now. Its design record is kept, shelved, in
 `feature/pivot-text-context-capture-2026-10-16T1703` branch. In its place the
 backend gained the context-capture schema (`context_entries`, `context_links`,
 `context_attachments`, `component_removals`, `system_config`, `nodes.seq`,
-`edges.label`) — see `CONTEXT-CAPTURE.md`. What still runs: the explicit-edge agents (Articulator,
-Outer Subconscious), Session Complete (Observer), ghost streaming and Rejection
+`edges.label`) — see `CONTEXT-CAPTURE.md`. What still runs (Articulator and Outer Subconscious were removed in context-engineering Slice 1a):
+Session Complete (Observer), ghost streaming and Rejection
 Insights. The next piece of work is redefining how agents are driven and how they
 read notes.
 

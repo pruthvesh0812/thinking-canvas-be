@@ -11,10 +11,10 @@ export const models = {
   // Orchestrator, Attunement Layer — fast, no thinking
   fast: () => google('gemini-3.1-flash-lite-preview'),
 
-  // Expander, Stress-Tester, Articulator — cheap content generation
+  // Expander, Stress-Tester, General — cheap content generation
   content: () => google('gemini-3.1-flash-lite-preview'),
 
-  // Observer, Outer Subconscious — deep reasoning (thinking:high)
+  // Observer — deep reasoning (thinking:high)
   // Rejection Insights Engine   — light reasoning (thinking:low)
   // Pass the returned config into generateText/streamText as:
   //   providerOptions: { google: thinkingOptions('high') }

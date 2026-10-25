@@ -1,11 +1,8 @@
 import { serialize } from '../src/serializer/index.js'
 import { serializeJudgeContext } from '../src/serializer/index.js'
-import { buildNeighborhoodBlock } from '../src/serializer/neighborhood.js'
 import { getCanvas } from '../src/db/canvases.js'
-import { getNode } from '../src/db/nodes.js'
 import { getOrCreateThread } from '../src/db/threads.js'
-import { getEdge } from '../src/db/edges.js'
-import type { AgentRole, AgentThread } from '../types/index.js'
+import type { AgentRole } from '../types/index.js'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Prints the serialized CONTEXT an agent reasons on — the user-message half
@@ -14,15 +11,10 @@ import type { AgentRole, AgentThread } from '../types/index.js'
 //
 //   npx tsx --env-file=.env scripts/inspect-context.ts <canvas_id> <agent_role>
 //   npx tsx --env-file=.env scripts/inspect-context.ts <canvas_id> judge [trigger_node_id]
-//   npx tsx --env-file=.env scripts/inspect-context.ts <canvas_id> articulator --edge <edge_id>
 //
-// agent_role: expander | stress_tester | observer | outer_subconscious |
-//             articulator | judge
+// agent_role: expander | stress_tester | observer | general | judge
 //
 // Default: serializes the agent's CURRENT thread as it stands in the DB.
-// --edge <id> (articulator only): simulates the pipeline's next run for that
-//   edge — builds the neighbourhood + the canvas_event turn the way
-//   articulator-pipeline.ts would — so you can preview a trigger before drawing it.
 // ─────────────────────────────────────────────────────────────────────────
 
 const BAR = '═'.repeat(78)
@@ -50,41 +42,6 @@ async function main() {
   }
 
   const role = roleArg as AgentRole
-
-  // Articulator --edge: simulate the next run for a specific edge.
-  const edgeFlag = rest.indexOf('--edge')
-  if (role === 'articulator' && edgeFlag !== -1) {
-    const edge_id = rest[edgeFlag + 1]
-    const edge = await getEdge(edge_id)
-    const from_node_id = edge.from_node_id
-    const to_node_id = edge.to_node_id
-
-    const [fromNode, toNode, neighborhood, thread] = await Promise.all([
-      getNode(from_node_id),
-      getNode(to_node_id),
-      buildNeighborhoodBlock({ canvas_id, from_node_id, to_node_id }),
-      getOrCreateThread(canvas_id, 'articulator'),
-    ])
-    const content = [
-      'Edge drawn connecting two existing nodes.',
-      `FROM [${from_node_id}]: "${fromNode.content ?? fromNode.summary ?? ''}"`,
-      `TO [${to_node_id}]: "${toNode.content ?? toNode.summary ?? ''}"`,
-      ...(neighborhood ? ['', neighborhood] : []),
-    ].join('\n')
-
-    // Clone the real thread and append the simulated turn (does NOT write to DB).
-    const simulated: AgentThread = {
-      ...thread,
-      messages: [
-        ...thread.messages,
-        { role: 'user', turn_type: 'canvas_event', node_id: from_node_id, content, timestamp: new Date().toISOString() },
-      ],
-    }
-    const ctx = await serialize(simulated, 'articulator', canvas, { triggerEdgeId: edge_id })
-    console.log(frame(`ARTICULATOR CONTEXT (simulated for edge ${edge_id.slice(0, 8)})`, ctx))
-    console.log(`\n[${ctx.length} chars — simulated, not written to the thread]`)
-    return
-  }
 
   // Default: serialize the agent's current thread as it stands.
   const triggerNodeId = rest.find(a => !a.startsWith('--'))

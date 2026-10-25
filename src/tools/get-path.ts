@@ -5,7 +5,7 @@ import { logger } from '../lib/logger.js'
 
 export const get_path = createTool({
   id: 'get_path',
-  description: 'Find the shortest path between two nodes via BFS over the edge graph — used by Articulator to understand what connects two ideas.',
+  description: 'Find the shortest path between two nodes via BFS over the edge graph.',
   inputSchema: z.object({
     from_node_id: z.string().uuid(),
     to_node_id: z.string().uuid(),

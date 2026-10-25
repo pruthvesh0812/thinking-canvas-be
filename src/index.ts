@@ -15,8 +15,6 @@ import { sessionRoute } from './routes/session.js'
 import { stripeRoute } from './routes/stripe.js'
 
 // Inngest pipeline functions
-import { articulatorPipeline } from './pipeline/articulator-pipeline.js'
-import { outerSubPipeline } from './pipeline/outer-sub-pipeline.js'
 import { rejectionInsightsPipeline } from './pipeline/rejection-insights.js'
 import { sessionCompletePipeline } from './pipeline/session-complete.js'
 
@@ -38,8 +36,6 @@ app.route('/api', stripeRoute)
 const inngestHandler = inngestServe({
   client: inngest,
   functions: [
-    articulatorPipeline,
-    outerSubPipeline,
     rejectionInsightsPipeline,
     sessionCompletePipeline,
   ],

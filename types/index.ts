@@ -8,8 +8,7 @@ export type AgentRole =
   | 'expander'
   | 'stress_tester'
   | 'observer'
-  | 'outer_subconscious'
-  | 'articulator'
+  | 'general'
 
 export type ContextNodeType =
   | 'reframe'
@@ -522,7 +521,7 @@ export const canvasEventSchema = z
     // re-derived on the backend).
     node_ids: z.array(z.string().uuid()).min(1).optional(),
     agent_role: z
-      .enum(['expander', 'stress_tester', 'observer', 'outer_subconscious', 'articulator'])
+      .enum(['expander', 'stress_tester', 'observer', 'general'])
       .optional(),
     event_type: z.enum([
       'node.created',

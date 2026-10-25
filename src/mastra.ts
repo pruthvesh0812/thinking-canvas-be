@@ -3,8 +3,6 @@ import { Observability } from '@mastra/observability'
 import { LangfuseExporter } from '@mastra/langfuse'
 import { expanderAgent } from './agents/expander.js'
 import { stressTesterAgent } from './agents/stress-tester.js'
-import { articulatorAgent } from './agents/articulator.js'
-import { outerSubconsciousAgent } from './agents/outer-subconscious.js'
 import { attunementAgent } from './agents/attunement.js'
 import { observerAgent } from './agents/observer.js'
 
@@ -17,8 +15,6 @@ export const mastra = new Mastra({
   agents: {
     expander: expanderAgent,
     stressTester: stressTesterAgent,
-    articulator: articulatorAgent,
-    outerSubconscious: outerSubconsciousAgent,
     attunement: attunementAgent,
     observer: observerAgent,
   },
