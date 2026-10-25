@@ -21,6 +21,17 @@ Receives canvas events from the frontend, runs the AI agent pipeline, and stream
 
 ---
 
+## Code Readability — TOP PRIORITY (owner's standing instruction)
+
+Applies to **every line of code you write, in every session**. It outranks the "minimum code" instinct in Rule 2 when the two pull apart.
+
+1. **Comment every important step** so that reading *only the comments*, top to bottom, gives the full logical flow of the function (what happens, in what order, and why).
+2. **Write comments for humans, in plain simple words.** Short, intuitive, like explaining to a teammate. **Clarity beats grammar**: broken or casual grammar is fine if it makes the idea easier to get (e.g. `// no focus node? then use whole canvas`).
+3. **Write intuitive code**: clear descriptive names, small steps, early returns, no clever tricks. A new reader should follow it without decoding.
+4. Don't narrate trivia (`// increment i`). Comment the steps, decisions and non-obvious reasons.
+
+---
+
 ## Task Classification & Context Load Table
 
 | Task | Load these files |
