@@ -2,7 +2,7 @@
 feature: "context-engineering"
 type: story
 created: 2026-10-24
-status: draft — decisions agreed in conversation (rev 2); slice 0 not started
+status: draft — decisions agreed in conversation (rev 3); slice 0 not started
 git_branch: "ccr-7bd29be2-xp0ss9"
 pr_url: "[PLACEHOLDER]"
 source_spec: "context-engineering.zip (16 files, README + 01–13 + appendices A/B), supplied 2026-10-21"
@@ -25,8 +25,14 @@ writes, Supabase Realtime) and a few assumptions do not fit our architecture; se
 - **Four agents:** Expander, Stress-Tester, **General** (new), Observer.
   **Articulator and Outer Subconscious are removed.** No agent is triggered by drawing an edge.
 - **Invocation is a mention, not a button.** The user writes `@expander …`, `@stress_tester …`, `@observer …` or
-  `@general …`. The frontend parses the mention and sends the agent in the request (body field `agent`). There are
-  **no presets**: choosing the agent fixes the scope, except for General.
+  **`@agent …`** (the General agent's mention; its internal role name stays `general`). The frontend parses the
+  mention and sends the agent in the request (body field `agent`). There are **no presets**: choosing the agent
+  fixes the scope, except for General.
+- **A message with no `@mention` is not an agent call.** It is context: it reaches agents only when a later run
+  retrieves it. Working assumption: such a message *is* a context note (`context_entries`, already built and already
+  a prompt layer); see Open Questions #1.
+- **Different agents may run at the same time** on the same focus; **the same agent may not** run twice on the same
+  focus while its previous run is in progress or its ghosts are still pending.
 - **The Observer gets an invocation endpoint now**, temporary name `POST /api/observer/run` (renamed later). It
   still also runs at Session Complete.
 - **General agent:** handles requests that are neither "expand this" nor "stress test this", e.g. "compare these
@@ -42,6 +48,10 @@ writes, Supabase Realtime) and a few assumptions do not fit our architecture; se
   generic node + edge contract.
 - **Streaming stays Redis → SSE**, sent in **node-edge chunks**. A small response may arrive as one chunk; a big one
   arrives as several, so the user sees structure grow.
+- **No node cap for now.** The agent uses as many nodes as the response needs to be complete. Sizing rules are a
+  later discussion.
+- **Rejection reasons are free text from the user, or null.** The fixed `too_abstract` / `too_technical` /
+  `skip_for_now` set (and the Observer's `connection_feedback` enum) is replaced by one nullable text reason.
 
 ## Decisions
 | # | Decision |
@@ -71,8 +81,8 @@ The backend:
    every edge whose endpoints are both already known (existing `n{seq}` or an earlier `t*`). A short answer is
    one chunk.
 2. **Validates each chunk before publishing** (spec file 09 §9.2, adapted): every `n{seq}` was shown in the prompt;
-   every `t*` is defined; no self-edges or duplicate edges; node cap; every new node has at least one edge. Unknown
-   ids are dropped, never guessed.
+   every `t*` is defined; no self-edges or duplicate edges; every new node has at least one edge. No node cap (the
+   response takes as many nodes as it needs). Unknown ids are dropped, never guessed.
 3. **Mints a `ghost_id` (UUID) per temp id** and maps `n{seq}` back to node UUIDs. LLM ids are never sent to the FE.
 4. Publishes over `canvas:stream:${sessionId}`:
 
@@ -134,7 +144,9 @@ CONTEXT-CAPTURE.md. The query text is user data too; it never reaches a system p
   `ThreadMessage`, `ghostStatusSchema`; `pipeline/rejection-insights.ts` (input = rejected ghost structure);
   `pipeline/session-complete.ts`; `agents/observer.ts`.
 - **New:** `agent_runs`; `POST /api/agent/run`; `POST /api/observer/run` (temporary); `run-agent` Inngest function
-  (concurrency key `canvas_id`, limit 1); `src/context/*` (retrieve, assemble, settings, output stream + validation);
+  (concurrency key `canvas_id + agent`, limit 1, so different agents run in parallel but the same agent queues; the
+  spec's canvas-wide limit guarded against agents reading each other's half-written rows, and ours never write to
+  the canvas); `src/context/*` (retrieve, assemble, settings, output stream + validation);
   `agents/general.ts`; `classify()`; `nodes.token_count`.
 - **Docs:** CORE-CONCEPTS, AGENT-PIPELINE, SERIALIZATION, CANVAS-SYNC, DATABASE-SCHEMA, FRONTEND-CONTRACT,
   LLM-LAYER, CLAUDE.md non-negotiables #9 and #11 (they name the ghost pair / spawn descriptor). Run
@@ -164,8 +176,10 @@ with tests.
 **3. `@observer` via `POST /api/observer/run`:** whole-canvas retrieval (S3) and the same output contract,
   replacing `serializeCanvasMap` and the separate observer structure format. Session Complete calls the same path.
 
-**4. Rejection Insights on ghost structures:** reasons attach to a rejected ghost node/structure; insights still
-  inject as NEGATIVE CONSTRAINTS. (Can merge into Slice 2 if the reason UI is unchanged.)
+**4. Rejection Insights on ghost structures:** migration: `rejection_insights.rejection_reason` becomes free
+  nullable text (CHECK and the category XOR dropped; `connection_feedback` folds into it). The engine derives severity
+  and insight points from the user's text; a null reason is recorded as an outcome but generates no NEGATIVE
+  CONSTRAINT (working assumption, Open Questions #3). Insights still inject as NEGATIVE CONSTRAINTS.
 
 **5. `expand_context`:** one tool (≤2 calls, ≤5 ids, only ids shown in the prompt), logged on the run. Replaces the
   navigation tools.
@@ -173,7 +187,7 @@ with tests.
 **6. `@stress_tester` (S2):** `nodes.token_count` + backfill script (like `backfill:enrichment`); budget check;
   whole canvas when it fits, otherwise region + stubs.
 
-**7. `@general`:** `agents/general.ts`; `classify()` → S1/S2/S3, going one scope deeper when unsure; focus =
+**7. `@agent` (General):** `agents/general.ts`; `classify()` → S1/S2/S3, going one scope deeper when unsure; focus =
   0..n selected/mentioned nodes (0 = canvas-wide).
 
 **8. Cleanup:** delete the old serializer, tier code, unused tools and ghost-pair remnants once no agent uses them.
@@ -202,18 +216,20 @@ it is.
   depends on the pivot's schema (`nodes.seq`, `context_*`).
 
 ## Open questions
-1. **Accept/reject granularity:** per ghost node, per edge (as the Observer was designed), or both? This decides the
-   `ghost-status` payload and what Rejection Insights learns from.
-2. **Rejection reasons:** keep `too_abstract` / `too_technical` / `skip_for_now` for the new ghosts, or change them?
-3. **No mention:** does a message without `@agent` go to General, or does nothing run?
-4. **Node cap per response** (spec placeholder 7) and the chunk threshold for "small → all at once".
-5. **Concurrent runs:** may the user invoke a second agent on the same focus node while ghosts from the first are
-   still pending? (Today `canAgentFire` blocks it.)
-6. **Paid tiers:** deferred.
+1. **Where messages live.** Assumed: a message with no `@mention` is a context note (`context_entries` +
+   `context_links`, written by the FE as today). Is the `@mention` message itself also saved as a note (so later
+   runs see what was asked), or only on `agent_runs.query`?
+2. **Accept/reject granularity:** per ghost node, per edge (as the Observer was designed), or both? This decides the
+   `ghost-status` payload and what a rejection reason is attached to.
+3. **Null rejection reason:** assumed it is recorded but produces no NEGATIVE CONSTRAINT. Or should the engine still
+   infer a constraint from the rejected content alone?
+4. **Response sizing and chunk threshold:** deferred to a later discussion (no cap for now).
+5. **Paid tiers:** deferred.
 
 ## Test plan
 - Unit: agent → scope map; assembly layer order and token accounting; `n{seq}` ↔ UUID mapping; output validation
-  (unknown id, self-edge, duplicate, orphan node, cap); the chunker (a node is emitted only when its edges resolve;
+  (unknown id, self-edge, duplicate, orphan node); concurrency (same agent + same focus is refused while pending,
+  a different agent is allowed); the chunker (a node is emitted only when its edges resolve;
   a small output is one chunk); note visibility (a deleted note, deleted link, set-aside node or unscanned
   attachment never appears); negative constraints always present; `getAvailableAgents` returns every agent for
   every tier.
