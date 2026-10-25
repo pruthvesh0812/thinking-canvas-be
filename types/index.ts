@@ -450,7 +450,10 @@ export type AgentRun = {
 export type GhostFrame = { ghost_id: string; content: string }
 
 // frame_id = the frame this node sits in (null = free standing).
-export type GhostNode = { ghost_id: string; content: string; frame_id: string | null }
+// depth = steps from the existing canvas node it hangs off (1 = first level). The frontend
+// shows depth 1 first and reveals depth N+1 when the user clicks a depth N node.
+// Computed by the backend, never written by the model.
+export type GhostNode = { ghost_id: string; content: string; frame_id: string | null; depth: number }
 
 // from / to are node UUIDs or ghost node ids.
 export type GhostEdge = { from: string; to: string; label: string | null }

@@ -239,8 +239,12 @@ it is.
   depends on the pivot's schema (`nodes.seq`, `context_*`).
 
 ## Open questions
-1. **Accept/reject granularity:** per ghost node, per edge, or both. Deferred to a later discussion; Slices 2 and 4
-   need it settled before the `ghost-status` payload is final.
+1. **Accept/reject granularity — decided 2026-10-26:** accept is **per node**. Ghost nodes carry `depth`; the frontend
+   shows depth 1 first and reveals deeper levels on click (everything is already generated, no extra call).
+   **Rejecting a node asks the user: delete its whole subtree, or keep the subtree hanging for later use.** Still to
+   pin down when `ghost-status` is built: what "hanging for later use" means (stays as pending ghosts? re-attached to
+   what, since its parent is gone?), what happens to a hidden child of an accepted node, and the `ghost-status`
+   payload (a node id + `reject_scope: 'node' | 'subtree'`).
 2. **Response sizing and chunk threshold:** deferred (no cap for now).
 3. **Paid tiers:** deferred.
 

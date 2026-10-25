@@ -120,6 +120,8 @@ export type GhostChunkBuilder = {
 export function createGhostChunkBuilder(idMap: IdMap): GhostChunkBuilder {
   // t1 -> the ghost id we minted for it. Only nodes we ACCEPTED are in here.
   const ghostIdByTempId = new Map<string, string>()
+  // ghost id -> how many steps from the existing canvas (see GhostNode.depth)
+  const depthByGhostId = new Map<string, number>()
   // "from|to" keys we already sent, to catch duplicate edges
   const seenEdges = new Set<string>()
   const all: GhostStructure = { frames: [], nodes: [], edges: [] }
@@ -146,6 +148,8 @@ export function createGhostChunkBuilder(idMap: IdMap): GhostChunkBuilder {
     // 2. we mint the ghost id now, so later nodes can link to it
     const ghostId = crypto.randomUUID()
     const edges: GhostEdge[] = []
+    // depth of every good link target (existing canvas nodes count as 0)
+    const targetDepths: number[] = []
 
     // 3. go through each link, keep only the good ones
     for (const link of node.links) {
@@ -171,6 +175,7 @@ export function createGhostChunkBuilder(idMap: IdMap): GhostChunkBuilder {
       }
 
       seenEdges.add(edgeKey)
+      targetDepths.push(depthByGhostId.get(otherId) ?? 0)
       edges.push({ from, to, label: link.label?.trim() || null })
     }
 
@@ -180,9 +185,17 @@ export function createGhostChunkBuilder(idMap: IdMap): GhostChunkBuilder {
       return null
     }
 
-    // 5. keep it, so the next nodes (even in the same frame) can link to it
+    // 5. depth = 1 + the closest link target. (Two parents? the shorter path wins,
+    //    so the node shows up as soon as either parent is opened.)
+    const depth = 1 + Math.min(...targetDepths)
+
+    // 6. keep it, so the next nodes (even in the same frame) can link to it
     ghostIdByTempId.set(node.temp_id, ghostId)
-    return { node: { ghost_id: ghostId, content: node.content.trim(), frame_id: frameGhostId }, edges }
+    depthByGhostId.set(ghostId, depth)
+    return {
+      node: { ghost_id: ghostId, content: node.content.trim(), frame_id: frameGhostId, depth },
+      edges,
+    }
   }
 
   // Put an accepted chunk into the running total.

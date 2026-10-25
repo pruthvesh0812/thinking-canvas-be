@@ -161,4 +161,33 @@ describe('createGhostChunkBuilder', () => {
     expect(builder.accepted().edges).toHaveLength(3)
     expect(builder.accepted().frames).toHaveLength(1)
   })
+
+  it('depth: first level is 1, each step further adds 1', () => {
+    const builder = createGhostChunkBuilder(idMap)
+    const t1 = builder.addElement(node('t1', [link('n1')])).chunk!.nodes[0]
+    const t2 = builder.addElement(node('t2', [link('t1')])).chunk!.nodes[0]
+    const t3 = builder.addElement(node('t3', [link('t2')])).chunk!.nodes[0]
+    expect([t1.depth, t2.depth, t3.depth]).toEqual([1, 2, 3])
+  })
+
+  it('depth: a TO link counts too (child written later, pointing at the earlier node)', () => {
+    const builder = createGhostChunkBuilder(idMap)
+    builder.addElement(node('t1', [link('n1')]))
+    const t2 = builder.addElement(node('t2', [link('t1', 'TO')])).chunk!.nodes[0]
+    expect(t2.depth).toBe(2)
+  })
+
+  it('depth: converging node takes the shorter path', () => {
+    const builder = createGhostChunkBuilder(idMap)
+    builder.addElement(node('t1', [link('n1')])) // depth 1
+    builder.addElement(node('t2', [link('t1')])) // depth 2
+    const t3 = builder.addElement(node('t3', [link('t2'), link('t1')])).chunk!.nodes[0]
+    expect(t3.depth).toBe(2)
+  })
+
+  it('depth: nodes inside one frame, all linked from the anchor, are all depth 1', () => {
+    const builder = createGhostChunkBuilder(idMap)
+    const { chunk } = builder.addElement(frame([node('t1', [link('n1')]), node('t2', [link('n5')])]))
+    expect(chunk!.nodes.map(n => n.depth)).toEqual([1, 1])
+  })
 })
