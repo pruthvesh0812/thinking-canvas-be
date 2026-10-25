@@ -2,7 +2,7 @@
 feature: "context-engineering"
 type: story
 created: 2026-10-24
-status: draft — decisions agreed in conversation (rev 4); slice 0 not started
+status: draft — decisions agreed in conversation (rev 5); slice 0 not started
 git_branch: "ccr-7bd29be2-xp0ss9"
 pr_url: "[PLACEHOLDER]"
 source_spec: "context-engineering.zip (16 files, README + 01–13 + appendices A/B), supplied 2026-10-21"
@@ -29,8 +29,12 @@ writes, Supabase Realtime) and a few assumptions do not fit our architecture; se
   has **no mention concept**: the frontend works out which agent was addressed and sends it as `agent` in the
   request. There are **no presets**: choosing the agent fixes the scope, except for General.
 - **There is no separate message store.** What the user writes, including the text that invokes an agent, is either
-  a **context entry** (`context_entries` + `context_links`) or a **node's own text**. The run request points at that
-  row; the backend reads the task text live from it, and later runs see it like any other context.
+  a **context entry** (`context_entries` + `context_links`) or a **node's own text**: writing `@expander …` in a node
+  invokes the agent just as writing it in a note does. The run request points at that row; the backend reads the task
+  text live from it, and later runs see it like any other context.
+- **A node's context = its own text + its context entries.** Whenever a node is given to an agent in full, it is
+  given as one unit: the node's text plus every visible context entry linked to it. A node is never shown without its
+  notes, and a note is never shown away from its node.
 - **Text that addresses no agent is not an agent call.** It is context, and reaches agents only when a later run
   retrieves it.
 - **Different agents may run at the same time** on the same focus; **the same agent may not** run twice on the same
@@ -123,17 +127,33 @@ level-+1 rule becomes Observer-specific validation.
 | **rejection insights** | `rejection_insights` | **missing from the spec; non-negotiable #10** |
 | set-aside nodes | `nodes.set_aside_at` | **missing from the spec; every retrieval read filters it, and any note linked to it** |
 
+## The node unit
+Every retrieval strategy loads nodes as units, and every token count is per unit:
+
+| Tier | What the agent sees for one node |
+|---|---|
+| full | `n{seq}` + the node's text + all its visible context entries (delimited, oldest first) |
+| title | `n{seq}` + `summary` + a count of its notes (e.g. `(2 notes)`), so the agent knows to `expand_context` |
+| stub | one line: `n{seq}` + the connecting edge's label + `summary` |
+
+- Unit tokens = node text tokens + note tokens. Notes are written by the frontend with no backend notify, so note
+  tokens are counted at run time (one aggregate query), not stored. `nodes.token_count` covers the text only.
+- Edges follow the same rule: an edge is its label plus the context entries linked to it.
+- When the invoking text is the focus node's own text, it appears once, in the focus unit, and the task layer
+  refers to it ("the request is the text of n12") rather than repeating it.
+- `expand_context` returns full units.
+
 ## Prompt layers (ours)
 1. System + agent instructions (constant; non-negotiable #4)
 2. Tools: `expand_context`
 3. Canvas intent: `title`, `original_intent`, canvas-level notes (delimited data)
 4. NEGATIVE CONSTRAINTS from active `rejection_insights` (non-negotiable #10)
 5. Thread memory (D9)
-6. Focus node(s), full text, with their notes
-7. Loaded nodes by tier (full / summary-as-title / stub) + edges with labels + notes on edges
+6. Focus node(s) as full units (text + notes)
+7. Loaded nodes as units at their tier (see "The node unit") + edges with labels + notes on edges
 8. Not-loaded stubs (`n40 —"needs legal sign-off"→ …`)
-9. Task: the text of the `source` row (context entry or node), or the agent's default task when it adds nothing.
-   That row is shown here only, not again in the notes layers.
+9. Task: the text of the `source` row, or the agent's default task when it adds nothing. A `context_entry` source is
+   shown here and left out of its node's unit; a `node` source stays in its unit and is referenced here.
 
 Notes are user data, wrapped in delimiters and read live at assembly (never copied into threads); see
 CONTEXT-CAPTURE.md. The task text is user data too; it never reaches a system prompt.
@@ -229,7 +249,8 @@ it is.
   (unknown id, self-edge, duplicate, orphan node); concurrency (same agent + same focus is refused while pending,
   a different agent is allowed); the chunker (a node is emitted only when its edges resolve;
   a small output is one chunk); note visibility (a deleted note, deleted link, set-aside node or unscanned
-  attachment never appears); negative constraints always present; `getAvailableAgents` returns every agent for
+  attachment never appears); a full unit always carries all its visible notes, a title unit shows the note count;
+  a node-text source is shown once; negative constraints always present; `getAvailableAgents` returns every agent for
   every tier.
 - Integration (fixture canvases): hub node with >25 neighbours; empty node; notes on node, edge and canvas; a
   set-aside neighbour; a canvas at exactly the budget boundary; a model output that fails validation twice →
