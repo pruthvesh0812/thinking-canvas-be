@@ -20,7 +20,7 @@ export const get_big_picture = createTool({
     edges: z.array(z.object({
       from: z.string(),
       to: z.string(),
-      edge_type: z.string(),
+      label: z.string().nullable(),
     })),
   }),
   execute: async (_inputData, { requestContext }) => {
@@ -36,7 +36,7 @@ export const get_big_picture = createTool({
         .order('created_at', { ascending: true }),
       db
         .from('edges')
-        .select('from_node_id, to_node_id, edge_type')
+        .select('from_node_id, to_node_id, label')
         .eq('canvas_id', canvas_id)
         .order('created_at', { ascending: true }),
     ])
@@ -73,7 +73,7 @@ export const get_big_picture = createTool({
       edges: activeEdges.map(e => ({
         from: e.from_node_id,
         to: e.to_node_id,
-        edge_type: e.edge_type,
+        label: e.label,
       })),
     }
   },

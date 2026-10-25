@@ -109,7 +109,7 @@ A directed connection between two nodes. Created by the user (frontend writes di
 | `session_id` | `UUID FK → sessions` | Session that created this edge |
 | `from_node_id` | `UUID FK → nodes` | Source node |
 | `to_node_id` | `UUID FK → nodes` | Target node |
-| `edge_type` | `TEXT NOT NULL` | `logical`, `doubt`, `question`, or `associative`. `question` edges trigger Outer Subconscious immediately. |
+| `edge_type` | `TEXT` (nullable) | **Deprecated, unused.** Edges are structure + free-text `label`. Made nullable in migration `20261025000001`; dropped in Slice 1c once the frontend stops sending it. |
 | `both_existing` | `BOOLEAN` | `true` when both `from_node_id` and `to_node_id` were already on the canvas before this edge was drawn. `true` triggers Articulator pipeline immediately (bypasses debounce). |
 | `from_handle` | `TEXT nullable` | Which side of the source node the edge attaches to — `TOP` / `RIGHT` / `LEFT` / `BOTTOM`. **Frontend-owned** — written on edge create, read on refetch to reattach visually. Backend never touches. CHECK constraint enforces the four values (NULL passes). |
 | `to_handle` | `TEXT nullable` | Which side of the target node the edge attaches to. Same ownership rules and CHECK constraint as `from_handle`. |

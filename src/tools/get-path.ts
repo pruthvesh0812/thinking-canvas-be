@@ -14,7 +14,7 @@ export const get_path = createTool({
     path: z.array(z.object({
       node_id: z.string(),
       summary: z.string().nullable(),
-      edge_type: z.string().nullable(),
+      label: z.string().nullable(),
     })),
     length: z.number(),
   }),
@@ -29,7 +29,7 @@ export const get_path = createTool({
 
     const [activeNodesResult, edgesResult] = await Promise.all([
       db.from('nodes').select('id').eq('canvas_id', canvas_id).is('set_aside_at', null),
-      db.from('edges').select('from_node_id, to_node_id, edge_type').eq('canvas_id', canvas_id),
+      db.from('edges').select('from_node_id, to_node_id, label').eq('canvas_id', canvas_id),
     ])
 
     if (activeNodesResult.error) {
@@ -48,14 +48,14 @@ export const get_path = createTool({
       e => activeIds.has(e.from_node_id) && activeIds.has(e.to_node_id)
     )
 
-    const adjacency = new Map<string, { to: string; edge_type: string }[]>()
+    const adjacency = new Map<string, { to: string; label: string | null }[]>()
     for (const e of edges) {
       if (!adjacency.has(e.from_node_id)) adjacency.set(e.from_node_id, [])
-      adjacency.get(e.from_node_id)!.push({ to: e.to_node_id, edge_type: e.edge_type })
+      adjacency.get(e.from_node_id)!.push({ to: e.to_node_id, label: e.label })
     }
 
-    const queue: { node_id: string; path: { node_id: string; edge_type: string | null }[] }[] = [
-      { node_id: from_node_id, path: [{ node_id: from_node_id, edge_type: null }] },
+    const queue: { node_id: string; path: { node_id: string; label: string | null }[] }[] = [
+      { node_id: from_node_id, path: [{ node_id: from_node_id, label: null }] },
     ]
     const visited = new Set<string>([from_node_id])
 
@@ -79,7 +79,7 @@ export const get_path = createTool({
           path: current.path.map(p => ({
             node_id: p.node_id,
             summary: summaryMap.get(p.node_id) ?? null,
-            edge_type: p.edge_type,
+            label: p.label,
           })),
           length: pathLength,
         }
@@ -90,7 +90,7 @@ export const get_path = createTool({
           visited.add(neighbor.to)
           queue.push({
             node_id: neighbor.to,
-            path: [...current.path, { node_id: neighbor.to, edge_type: neighbor.edge_type }],
+            path: [...current.path, { node_id: neighbor.to, label: neighbor.label }],
           })
         }
       }

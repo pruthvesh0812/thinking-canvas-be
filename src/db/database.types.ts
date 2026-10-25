@@ -406,7 +406,7 @@ export type Database = {
           both_existing: boolean
           canvas_id: string
           created_at: string
-          edge_type: string
+          edge_type: string | null
           from_handle: string | null
           from_node_id: string
           id: string
@@ -419,7 +419,7 @@ export type Database = {
           both_existing?: boolean
           canvas_id: string
           created_at?: string
-          edge_type: string
+          edge_type?: string | null
           from_handle?: string | null
           from_node_id: string
           id?: string
@@ -432,7 +432,7 @@ export type Database = {
           both_existing?: boolean
           canvas_id?: string
           created_at?: string
-          edge_type?: string
+          edge_type?: string | null
           from_handle?: string | null
           from_node_id?: string
           id?: string

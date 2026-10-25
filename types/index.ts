@@ -18,14 +18,6 @@ export type ContextNodeType =
   | 'contradiction'
   | 'appreciation'
 
-// 'relate' is the DELIBERATE "articulate this connection" gesture — the only
-// edge type that triggers the Articulator immediately. 'logical' (and doubt /
-// associative) are silent structural edges: drawing one just rearranges the
-// canvas, absorbed into the next debounced pass, so the user isn't ambushed by
-// a ghost every time they tidy up their thinking. 'question' still fires the
-// Outer Subconscious.
-export type EdgeType = 'logical' | 'doubt' | 'question' | 'associative' | 'relate'
-
 // Which side of a node the edge attaches to. Frontend-owned (React Flow
 // handle id); backend never reads it. Enforced by CHECK constraint on the
 // edges table.
@@ -132,11 +124,10 @@ export type Edge = {
   session_id: string
   from_node_id: string
   to_node_id: string
-  edge_type: EdgeType
   both_existing: boolean
   // Frontend-owned handle attachments — restored on refetch so an edge
   // reattaches to the exact same sides it left. Backend never reads or
-  // writes these; agent pipelines route off edge_type / both_existing only.
+  // writes these; agent pipelines route off both_existing only.
   // Nullable to keep pre-migration edges valid.
   from_handle: EdgeHandle | null
   to_handle: EdgeHandle | null
@@ -430,7 +421,6 @@ export type SpawnDescriptor = {
     agent_role: AgentRole
   }
   context_edge: {
-    edge_type: EdgeType
     from: string  // trigger_node_id
     to: string    // context ghost_id
   }
@@ -440,7 +430,6 @@ export type SpawnDescriptor = {
     node_type: 'question'
   }
   question_edge?: {
-    edge_type: EdgeType
     from: string  // context ghost_id
     to: string    // question ghost_id
   }
