@@ -50,8 +50,8 @@ describe('createGhostChunkBuilder', () => {
 
   it('single: one node linked from an existing node, n-label swapped for uuid', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const { chunk, problems } = builder.addElement(node('t1', [link('n1', 'FROM', ' because ')]))
-    expect(problems).toEqual([])
+    const { chunk, errors } = builder.addElement(node('t1', [link('n1', 'FROM', ' because ')]))
+    expect(errors).toEqual([])
     expect(chunk!.frames).toEqual([])
     expect(chunk!.nodes[0].frame_id).toBeNull()
     expect(chunk!.edges).toEqual([{ from: 'uuid-1', to: chunk!.nodes[0].ghost_id, label: 'because' }])
@@ -65,10 +65,10 @@ describe('createGhostChunkBuilder', () => {
 
   it('multi: a frame arrives whole, in ONE chunk, every node pointing at the frame', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const { chunk, problems } = builder.addElement(
+    const { chunk, errors } = builder.addElement(
       frame([node('t1', [link('n1')]), node('t2', [link('n1')])]),
     )
-    expect(problems).toEqual([])
+    expect(errors).toEqual([])
     expect(chunk!.frames).toHaveLength(1)
     expect(chunk!.nodes).toHaveLength(2)
     expect(chunk!.edges).toHaveLength(2)
@@ -83,13 +83,13 @@ describe('createGhostChunkBuilder', () => {
 
   it('frame with only one valid node is dissolved, the node is kept free standing', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const { chunk, problems } = builder.addElement(
+    const { chunk, errors } = builder.addElement(
       frame([node('t1', [link('n1')]), node('t2', [link('n99')])]),
     )
     expect(chunk!.frames).toEqual([])
     expect(chunk!.nodes).toHaveLength(1)
     expect(chunk!.nodes[0].frame_id).toBeNull()
-    expect(problems.join(' ')).toMatch(/frame removed/)
+    expect(errors.join(' ')).toMatch(/frame removed/)
   })
 
   it('frame with no valid nodes sends nothing', () => {
@@ -121,23 +121,23 @@ describe('createGhostChunkBuilder', () => {
 
   it('drops unknown ids instead of guessing; node with no valid link is dropped', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const { chunk, problems } = builder.addElement(node('t1', [link('n99')]))
+    const { chunk, errors } = builder.addElement(node('t1', [link('n99')]))
     expect(chunk).toBeNull()
-    expect(problems.join(' ')).toMatch(/unknown id n99/)
+    expect(errors.join(' ')).toMatch(/unknown id n99/)
   })
 
   it('keeps the good links when only some are bad', () => {
     const builder = createGhostChunkBuilder(idMap)
-    const { chunk, problems } = builder.addElement(node('t1', [link('n99'), link('n1')]))
+    const { chunk, errors } = builder.addElement(node('t1', [link('n99'), link('n1')]))
     expect(chunk!.edges).toHaveLength(1)
-    expect(problems).toHaveLength(1)
+    expect(errors).toHaveLength(1)
   })
 
   it('drops self links, duplicate edges and reused temp ids', () => {
     const builder = createGhostChunkBuilder(idMap)
     const dup = builder.addElement(node('t1', [link('t1'), link('n1'), link('n1')]))
     expect(dup.chunk!.edges).toHaveLength(1)
-    expect(dup.problems).toHaveLength(2)
+    expect(dup.errors).toHaveLength(2)
     expect(builder.addElement(node('t1', [link('n1')])).chunk).toBeNull()
   })
 

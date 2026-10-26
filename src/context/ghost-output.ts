@@ -108,7 +108,7 @@ export type AddElementResult = {
   // null = nothing to send (the element was dropped)
   chunk: GhostChunk | null
   // human-readable reasons something was dropped (for logs + retry hint)
-  problems: string[]
+  errors: string[]
 }
 
 export type GhostChunkBuilder = {
@@ -137,11 +137,11 @@ export function createGhostChunkBuilder(idMap: IdMap): GhostChunkBuilder {
   function checkNode(
     node: ModelNode,
     frameGhostId: string | null,
-    problems: string[],
+    errors: string[],
   ): { node: GhostNode; edges: GhostEdge[] } | null {
     // 1. temp id must be new (two nodes can't both be t1)
     if (ghostIdByTempId.has(node.temp_id)) {
-      problems.push(`${node.temp_id} used twice`)
+      errors.push(`${node.temp_id} used twice`)
       return null
     }
 
@@ -154,13 +154,13 @@ export function createGhostChunkBuilder(idMap: IdMap): GhostChunkBuilder {
     // 3. go through each link, keep only the good ones
     for (const link of node.links) {
       if (link.target === node.temp_id) {
-        problems.push(`${node.temp_id} links to itself`)
+        errors.push(`${node.temp_id} links to itself`)
         continue
       }
 
       const otherId = resolveId(link.target)
       if (!otherId) {
-        problems.push(`${node.temp_id} links to unknown id ${link.target}`)
+        errors.push(`${node.temp_id} links to unknown id ${link.target}`)
         continue
       }
 
@@ -170,7 +170,7 @@ export function createGhostChunkBuilder(idMap: IdMap): GhostChunkBuilder {
 
       const edgeKey = `${from}|${to}`
       if (seenEdges.has(edgeKey)) {
-        problems.push(`${node.temp_id} has a duplicate edge to ${link.target}`)
+        errors.push(`${node.temp_id} has a duplicate edge to ${link.target}`)
         continue
       }
 
@@ -181,7 +181,7 @@ export function createGhostChunkBuilder(idMap: IdMap): GhostChunkBuilder {
 
     // 4. a node with no valid edge would float alone on the canvas -> drop it
     if (edges.length === 0) {
-      problems.push(`${node.temp_id} has no valid link, dropped`)
+      errors.push(`${node.temp_id} has no valid link, dropped`)
       return null
     }
 
@@ -210,38 +210,38 @@ export function createGhostChunkBuilder(idMap: IdMap): GhostChunkBuilder {
       // is it even shaped like a node or a frame?
       const parsed = modelElementSchema.safeParse(rawElement)
       if (!parsed.success) {
-        return { chunk: null, problems: [`element has wrong shape: ${parsed.error.issues[0]?.message}`] }
+        return { chunk: null, errors: [`element has wrong shape: ${parsed.error.issues[0]?.message}`] }
       }
       const element = parsed.data
-      const problems: string[] = []
+      const errors: string[] = []
 
       // ── a lone node ──
       if (element.kind === 'node') {
-        const checked = checkNode(element, null, problems)
-        if (!checked) return { chunk: null, problems }
+        const checked = checkNode(element, null, errors)
+        if (!checked) return { chunk: null, errors }
 
         const chunk: GhostChunk = { frames: [], nodes: [checked.node], edges: checked.edges }
         remember(chunk)
-        return { chunk, problems }
+        return { chunk, errors }
       }
 
       // ── a frame: check every node inside, in order ──
       const frame: GhostFrame = { ghost_id: crypto.randomUUID(), content: element.content.trim() }
       const kept: { node: GhostNode; edges: GhostEdge[] }[] = []
       for (const inner of element.nodes) {
-        const checked = checkNode(inner, frame.ghost_id, problems)
+        const checked = checkNode(inner, frame.ghost_id, errors)
         if (checked) kept.push(checked)
       }
 
-      if (kept.length === 0) return { chunk: null, problems }
+      if (kept.length === 0) return { chunk: null, errors }
 
       // a frame around ONE node means nothing -> dissolve it, keep the node free standing
       if (kept.length === 1) {
-        problems.push('frame had fewer than 2 valid nodes, frame removed')
+        errors.push('frame had fewer than 2 valid nodes, frame removed')
         kept[0].node.frame_id = null
         const chunk: GhostChunk = { frames: [], nodes: [kept[0].node], edges: kept[0].edges }
         remember(chunk)
-        return { chunk, problems }
+        return { chunk, errors }
       }
 
       const chunk: GhostChunk = {
@@ -250,7 +250,7 @@ export function createGhostChunkBuilder(idMap: IdMap): GhostChunkBuilder {
         edges: kept.flatMap(k => k.edges),
       }
       remember(chunk)
-      return { chunk, problems }
+      return { chunk, errors }
     },
 
     accepted() {
