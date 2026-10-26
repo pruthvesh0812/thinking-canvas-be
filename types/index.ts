@@ -441,6 +441,44 @@ export type AgentRun = {
   finished_at: string | null
 }
 
+// ── What retrieval hands to prompt assembly ──
+
+// One note the user attached to a node, an edge, or the canvas.
+export type ContextNote = { id: string; content: string; created_at: string }
+
+// full  = text + all visible notes.   title = short summary + how many notes it has.
+export type LoadedNodeTier = 'full' | 'title'
+
+// Why a node is in the prompt (the agent is told, so it knows how to treat it).
+export type LoadedNodeReason = 'focus' | 'hop1' | 'ancestor'
+
+export type LoadedNode = {
+  id: string
+  seq: number                  // the n{seq} the model will see
+  tier: LoadedNodeTier
+  reason: LoadedNodeReason
+  content: string | null       // node text (always set for full tier)
+  summary: string | null
+  notes: ContextNote[]         // full tier only, oldest first
+  note_count: number           // all tiers, so a title node can say "(2 notes)"
+}
+
+export type LoadedEdge = {
+  id: string
+  from_node_id: string         // parent
+  to_node_id: string           // child
+  label: string | null
+  notes: ContextNote[]
+}
+
+export type RetrievalResult = {
+  scope: ContextScope
+  focus_node_ids: string[]
+  nodes: LoadedNode[]          // focus first, then 1-hop, then ancestors
+  edges: LoadedEdge[]          // only edges whose both ends are in `nodes`
+  canvas_notes: ContextNote[]  // notes about the canvas as a whole
+}
+
 // What the frontend gets. All ids are real: node UUIDs, or ghost ids minted by the backend.
 // (The model never sees these. It writes n5 / t1 / f1, see src/context/ghost-output.ts.)
 

@@ -29,6 +29,9 @@ export const S3_SEMANTIC_K = 8
 export const SIM_FLOOR_S2 = 0.75
 export const SIM_FLOOR_S3 = 0.65
 
+// How far up the parent chain S1 walks from the focus node (parent = edge pointing INTO the node).
+export const ANCESTOR_MAX_DEPTH = 6
+
 // Most-recent nodes always included.
 export const RECENT_N = 10
 
