@@ -476,3 +476,65 @@ deletes the FE workarounds noted above.
 > **Resolved (2026-08-16):** row 6 — second active session per canvas — is
 > fixed. `session/start` now returns the existing active session (200,
 > idempotent) instead of creating a sibling; see §5.3.
+
+---
+
+## 12. Agent runs and ghost structures (context engineering, 2026-10-29) — READ THIS FIRST
+
+> **This section wins over §4–§7 where they disagree.** The Articulator and Outer Subconscious are removed, no
+> agent is triggered by drawing an edge, and the ghost *pair* (`spawn` / `chunk` / `node_type` / `done`) is being
+> replaced by a ghost *structure*. Until the Observer moves over (story slice 3) the old messages still exist for it.
+> Source of truth: `.ai/features/context-engineering/story.md`.
+
+### 12.1 Starting a run: `POST /api/agent/run`
+
+The user addresses an agent in a node's text or a note (`@expander ...`). **The frontend works out which agent** and sends:
+
+```json
+{ "canvas_id": "uuid", "session_id": "uuid", "agent": "expander",
+  "focus_node_ids": ["uuid"], "source": { "type": "node" | "context_entry", "id": "uuid" } }
+```
+
+- `source` is the row that holds the invoking text. The backend reads that text live; never send the text itself.
+- `agent`: `expander` works today. `stress_tester` and `general` answer `501` until built. The Observer has its own route later.
+- Answers **202 `{ run_id }`** immediately. The result arrives on the session stream (§6).
+- Errors: `400` bad payload / focus or source not on this canvas / session not on this canvas, `403` tier, `404` canvas or
+  session, `409` the same agent is already running on this focus **or its earlier ghosts are still undecided**, `501` agent not built.
+- Different agents may run at the same time on the same focus. The same agent may not.
+
+### 12.2 The stream
+
+All on the existing `GET /api/stream/:sessionId`, in this order for one run:
+
+| Message | Payload | Meaning |
+|---|---|---|
+| `structure_start` | `run_id`, `agent`, `focus_node_ids` | Run began. Draw anchor halos on the focus nodes. |
+| `ghost_chunk` (0..n) | `run_id`, `frames[]`, `nodes[]`, `edges[]` | One piece: a lone node, or a whole frame with its nodes, plus the edges ready to draw. |
+| `structure_done` | `run_id`, `thread_id`, `turn_index` | Finished and saved. |
+| `structure_error` | `run_id`, `reason` | Failed. **Discard every ghost of this `run_id`**, even if chunks already arrived. `reason` is safe to show. |
+
+```ts
+GhostFrame = { ghost_id, content }                          // a box around 2+ nodes; content says how they relate
+GhostNode  = { ghost_id, content, frame_id | null, depth }  // depth 1 = first level
+GhostEdge  = { from, to, label | null }                     // from/to = a real node uuid OR a ghost id
+```
+
+- All ids are real: node UUIDs for existing nodes, backend-minted `ghost_id`s for ghosts. The model's own ids never reach you.
+- Edge direction: `from` = parent, `to` = child, same as `edges.from_node_id` / `to_node_id`.
+- A frame arrives once, whole, together with all its nodes. Frames hold nodes only.
+- **Depth:** show `depth 1` first. Clicking a ghost reveals the ghosts one level deeper that are linked to it. Everything is already
+  delivered, so there is no extra call. A node reachable two ways takes the shorter depth.
+- Edges have no type anymore, only an optional free-text `label` (your `edges` inserts must stop sending `edge_type`; the column is dropped).
+
+### 12.3 Accepting and rejecting (decided, endpoint not built yet)
+
+- Accept is **per node**: the frontend writes the accepted node (and the edge you choose) to Supabase as it does today.
+- Rejecting a node asks the user: **delete its whole subtree**, or **keep the subtree saved off** (unconnected; any of them can later be
+  accepted on its own, landing on the canvas unconnected). Hidden children of an accepted node stay pending.
+- Rejection learning uses only nodes the user actually rejected.
+- The `POST /api/ghost-status` payload for structures is **not final** (planned: node id + `reject_scope: node | subtree` +
+  `subtree_action: delete | save_off`). Do not build against the old pair payload.
+
+### 12.4 Edge labels
+
+`edges.label` (free text, up to 80 characters in the UI) is the only edge description. It is shown to agents on the edge.

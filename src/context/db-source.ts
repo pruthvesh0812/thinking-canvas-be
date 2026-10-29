@@ -8,7 +8,8 @@ import type { S1Source } from './retrieve-s1.js'
 
 export function createDbSource(canvasId: string): S1Source {
   return {
-    getNodes: ids => getNodesByIds(ids),
+    // only nodes of THIS canvas: an id from another canvas must never be readable here
+    getNodes: async ids => (await getNodesByIds(ids)).filter(node => node.canvas_id === canvasId),
     getEdgesTouching: ids => getEdgesTouching(canvasId, ids),
     getNotes: params => getVisibleNotes(canvasId, params),
   }
