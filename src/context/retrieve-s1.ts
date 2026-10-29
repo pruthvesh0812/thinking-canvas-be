@@ -11,11 +11,10 @@
 //   canvas notes     always
 //
 // All reads go through `S1Source` so the logic can be tested without a database.
+// (This file imports no database code on purpose: the real source is in db-source.ts.)
 
 import { logger } from '../lib/logger.js'
-import { getNodesByIds } from '../db/nodes.js'
-import { getEdgesTouching } from '../db/edges.js'
-import { getVisibleNotes, type VisibleNotes } from '../db/context-notes.js'
+import type { VisibleNotes } from '../db/context-notes.js'
 import { ANCESTOR_MAX_DEPTH, HUB_FULLTEXT_NEIGHBORS } from './settings.js'
 import type { ContextNote, Edge, LoadedEdge, LoadedNode, Node, RetrievalResult } from '../../types/index.js'
 
@@ -26,15 +25,6 @@ export type S1Source = {
   // Every edge touching any of these nodes.
   getEdgesTouching(ids: string[]): Promise<Edge[]>
   getNotes(params: { nodeIds: string[]; edgeIds: string[]; excludeEntryId?: string }): Promise<VisibleNotes>
-}
-
-// The real source, backed by Supabase.
-export function createDbSource(canvasId: string): S1Source {
-  return {
-    getNodes: ids => getNodesByIds(ids),
-    getEdgesTouching: ids => getEdgesTouching(canvasId, ids),
-    getNotes: params => getVisibleNotes(canvasId, params),
-  }
 }
 
 export async function retrieveS1(

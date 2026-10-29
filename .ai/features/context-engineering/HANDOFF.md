@@ -28,6 +28,9 @@ Read in this order:
 - Accept/reject granularity (per node / per edge / both) — must be settled before Slice 2 finalizes `ghost-status`.
 - Response sizing / chunk threshold. Paid tiers.
 
+## Dev tool
+To see the exact prompt an agent would read (and the token cost per layer) while you tweak the layout: `PROMPT-PREVIEW.md` in this folder.
+
 ## Branch
 Work builds on the pivot branch (PR #18, `feature/pivot-text-context-capture-2026-10-16T1703`, open; `main` is
 behind it). Check whether #18 has merged before starting: if yes, branch from `main`; if no, stack on the pivot

@@ -5,11 +5,6 @@ import { retrieveS1, type S1Source } from './retrieve-s1.js'
 import { makeEdge, makeInMemorySource, makeNode, makeNote } from './__fixtures__/pricing-canvas.js'
 import { ANCESTOR_MAX_DEPTH, HUB_FULLTEXT_NEIGHBORS } from './settings.js'
 
-// The real modules touch Supabase; tests only use the in-memory source below.
-vi.mock('../db/nodes.js', () => ({}))
-vi.mock('../db/edges.js', () => ({}))
-vi.mock('../db/context-notes.js', () => ({}))
-
 const node = makeNode
 const edge = makeEdge
 const note = makeNote
@@ -17,8 +12,9 @@ const note = makeNote
 function makeSource(nodes: Node[], edges: Edge[], notes: Partial<VisibleNotes> = {}) {
   // these tests set the notes result directly; the fixture source covers real note rules
   const source = makeInMemorySource(nodes, edges)
-  source.getNotes.mockResolvedValue({ byNode: new Map(), byEdge: new Map(), canvas: [], ...notes })
-  return source
+  const getNotes = vi.fn(async (): Promise<VisibleNotes> => ({ byNode: new Map(), byEdge: new Map(), canvas: [], ...notes }))
+  source.getNotes = getNotes
+  return Object.assign(source, { getNotes })
 }
 
 const run = (source: S1Source, focus = ['focus'], excludeEntryId?: string) =>

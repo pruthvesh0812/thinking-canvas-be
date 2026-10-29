@@ -1,0 +1,48 @@
+{
+  "canvas": {
+    "title": "B2B launch pricing",
+    "goal": "Decide a pricing model for the B2B launch"
+  },
+
+  "agent": "expander",
+  "focus": ["n2"],
+  "task": {
+    "text": "@expander what else could we try here?",
+    "sourceType": "node",
+    "sourceNode": "n2"
+  },
+
+  "nodes": [
+    { "id": "n1", "text": "Decide a pricing model", "summary": "Pricing model decision" },
+    { "id": "n2", "text": "Usage-based billing via Stripe metered plans", "summary": "Usage-based billing" },
+    { "id": "n3", "text": "Flat annual license", "summary": "Flat annual license" },
+    { "id": "n4", "text": "Survey: 60% of pilot customers prefer paying per seat", "summary": "Survey favours per-seat" },
+    { "id": "n5", "text": "Set up Stripe metering for API usage", "summary": "Stripe metering setup" },
+    { "id": "n6", "text": "An old AI idea the user set aside", "setAside": true },
+    { "id": "n7", "text": "Hire a designer", "summary": "Hire designer" }
+  ],
+
+  "edges": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n1", "to": "n3" },
+    { "from": "n4", "to": "n2", "label": "contradicts" },
+    { "from": "n2", "to": "n5", "label": "needs" },
+    { "from": "n2", "to": "n6" }
+  ],
+
+  "notes": [
+    { "on": "n2", "text": "Heavy API users make up 70% of revenue" },
+    { "on": "n2", "text": "Finance wants predictable monthly bills" },
+    { "on": "edge:n4>n2", "text": "Sample was only 12 customers" },
+    { "on": "canvas", "text": "Launch is in Q1, budget is tight" },
+    { "on": "n6", "text": "A note on the set-aside node: must never show up" },
+    { "on": "n1", "text": "Note on the parent node" }
+  ],
+
+  "threadMemory": [
+    "expander proposed \"Per-seat pricing with usage caps\" (not decided yet)",
+    "stress_tester proposed \"Heavy users may churn when bills spike\" (rejected)"
+  ],
+
+  "constraints": "NEGATIVE CONSTRAINTS (active, do not violate):\n- Too abstract: avoid generic business advice"
+}

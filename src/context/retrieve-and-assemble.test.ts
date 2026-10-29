@@ -1,13 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { retrieveS1 } from './retrieve-s1.js'
 import { assemblePrompt } from './assemble.js'
 import { createIdMap } from './ids.js'
 import { createPricingCanvas } from './__fixtures__/pricing-canvas.js'
-
-// The real db modules need Supabase; this test only uses the in-memory fixture source.
-vi.mock('../db/nodes.js', () => ({}))
-vi.mock('../db/edges.js', () => ({}))
-vi.mock('../db/context-notes.js', () => ({}))
 
 // End to end on the sample canvas: retrieve (S1) -> assemble -> what the agent reads.
 describe('S1 retrieve + assemble on the pricing canvas', () => {
