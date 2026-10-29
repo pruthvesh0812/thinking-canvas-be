@@ -51,7 +51,7 @@ describe('assemblePrompt', () => {
       ),
     })
     expect(prompt).toContain('id="n12"')
-    expect(prompt).toContain('n3 - "because"-> n12')
+    expect(prompt).toContain('n3 -"because"-> n12')
     expect(prompt).not.toContain('uuid-')
   })
 

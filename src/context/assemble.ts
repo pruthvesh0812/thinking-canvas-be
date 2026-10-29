@@ -99,7 +99,7 @@ function renderNode(node: LoadedNode): string {
 function renderEdge(edge: LoadedEdge, labelById: Map<string, string>): string {
   const from = labelById.get(edge.from_node_id) ?? '?'
   const to = labelById.get(edge.to_node_id) ?? '?'
-  const labelPart = edge.label ? ` "${escapeData(edge.label)}"` : ''
+  const labelPart = edge.label ? `"${escapeData(edge.label)}"` : ''
   const head = `${from} -${labelPart}-> ${to}`
   if (edge.notes.length === 0) return head
   return [`<edge>`, head, ...renderNotes(edge.notes), `</edge>`].join('\n')

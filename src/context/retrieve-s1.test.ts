@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ContextNote, Edge, Node } from '../../types/index.js'
+import type { Edge, Node } from '../../types/index.js'
 import type { VisibleNotes } from '../db/context-notes.js'
 import { retrieveS1, type S1Source } from './retrieve-s1.js'
+import { makeEdge, makeInMemorySource, makeNode, makeNote } from './__fixtures__/pricing-canvas.js'
 import { ANCESTOR_MAX_DEPTH, HUB_FULLTEXT_NEIGHBORS } from './settings.js'
 
 // The real modules touch Supabase; tests only use the in-memory source below.
@@ -9,33 +10,15 @@ vi.mock('../db/nodes.js', () => ({}))
 vi.mock('../db/edges.js', () => ({}))
 vi.mock('../db/context-notes.js', () => ({}))
 
-// ── small builders ──
-let clock = 0
-const node = (id: string, seq: number, extra: Partial<Node> = {}): Node => ({
-  id, seq, canvas_id: 'c1', session_id: 's1', owner: 'human',
-  content: `text of ${id}`, summary: `summary of ${id}`, direction_marker: null, embedding: null,
-  x: null, y: null, width: null, height: null,
-  // each node is created one second after the previous one
-  created_at: new Date(2026, 0, 1, 0, 0, ++clock).toISOString(),
-  set_aside_at: null,
-  ...extra,
-})
-const edge = (id: string, from: string, to: string, label: string | null = null): Edge => ({
-  id, canvas_id: 'c1', session_id: 's1', from_node_id: from, to_node_id: to,
-  both_existing: true, from_handle: null, to_handle: null, label, created_at: '2026-01-01T00:00:00Z',
-})
-const note = (id: string, content: string): ContextNote => ({ id, content, created_at: '2026-01-01T00:00:00Z' })
+const node = makeNode
+const edge = makeEdge
+const note = makeNote
 
-function makeSource(
-  nodes: Node[],
-  edges: Edge[],
-  notes: Partial<VisibleNotes> = {},
-): S1Source & { getNotes: ReturnType<typeof vi.fn> } {
-  return {
-    getNodes: async ids => nodes.filter(n => ids.includes(n.id) && !n.set_aside_at),
-    getEdgesTouching: async ids => edges.filter(e => ids.includes(e.from_node_id) || ids.includes(e.to_node_id)),
-    getNotes: vi.fn(async () => ({ byNode: new Map(), byEdge: new Map(), canvas: [], ...notes })),
-  }
+function makeSource(nodes: Node[], edges: Edge[], notes: Partial<VisibleNotes> = {}) {
+  // these tests set the notes result directly; the fixture source covers real note rules
+  const source = makeInMemorySource(nodes, edges)
+  source.getNotes.mockResolvedValue({ byNode: new Map(), byEdge: new Map(), canvas: [], ...notes })
+  return source
 }
 
 const run = (source: S1Source, focus = ['focus'], excludeEntryId?: string) =>
