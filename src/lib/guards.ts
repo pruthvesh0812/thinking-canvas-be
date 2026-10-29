@@ -1,38 +1,31 @@
 import * as threads from '../db/threads.js'
+import { getActiveRuns } from '../db/agent-runs.js'
 import { logger } from './logger.js'
-import type { AgentRole, ThreadMessage } from '../../types/index.js'
+import type { AgentRole } from '../../types/index.js'
+import { whyBlocked } from './block-rules.js'
 
-type GhostPairMsg = Extract<ThreadMessage, { role: 'assistant'; turn_type: 'ghost_pair' }>
-
-function asGhostPairMsg(msg: ThreadMessage): GhostPairMsg | null {
-  return msg.role === 'assistant' && msg.turn_type === 'ghost_pair' ? msg : null
-}
-
-// Non-negotiable guard — called BEFORE every agent route.
-// Returns false if this trigger node already has a PENDING ghost pair on the
-// agent's thread (post-finalize but pre-user-action). Threads are canvas-scoped.
+// Non-negotiable guard: called BEFORE every agent run.
+// Returns false when the same agent must not run now (see whyBlocked).
+// Threads are canvas-scoped, so the thread of this agent on this canvas is the one checked.
 export async function canAgentFire(
   canvasId: string,
   agentRole: AgentRole,
-  triggerNodeId: string
+  focusNodeIds: string[],
 ): Promise<boolean> {
-  const thread = await threads.getByCanvas(canvasId, agentRole)
-  if (thread) {
-    const pending = thread.messages.some((msg) => {
-      const gp = asGhostPairMsg(msg)
-      return (
-        gp?.ghost_pair.triggered_by_node_id === triggerNodeId &&
-        gp?.ghost_pair.pair_status === 'pending'
-      )
+  const [activeRuns, thread] = await Promise.all([
+    getActiveRuns(canvasId, agentRole),
+    threads.getByCanvas(canvasId, agentRole),
+  ])
+
+  const reason = whyBlocked({ focusNodeIds, activeRuns, thread })
+  if (reason) {
+    logger.warn('[guard:canAgentFire] blocked', {
+      canvas_id: canvasId,
+      agent_role: agentRole,
+      focus_node_ids: focusNodeIds,
+      reason,
     })
-    if (pending) {
-      logger.warn('[guard:canAgentFire] pending ghost blocks fire', {
-        canvas_id: canvasId,
-        agent_role: agentRole,
-        trigger_node_id: triggerNodeId,
-      })
-      return false
-    }
+    return false
   }
 
   return true
