@@ -94,3 +94,30 @@ export async function getVisibleNotes(
 
   return result
 }
+
+// The text of the note that invoked an agent (shown in the task layer), read live.
+// Returns null when there is nothing to use: the note does not exist, belongs to another canvas,
+// was deleted, or has no active link (an unlinked note is invisible to everyone).
+export async function getInvokingEntryText(canvas_id: string, entry_id: string): Promise<string | null> {
+  // 1. the note itself: same canvas, not deleted
+  const { data: entry, error } = await db
+    .from('context_entries')
+    .select('content')
+    .eq('id', entry_id)
+    .eq('canvas_id', canvas_id)
+    .is('deleted_at', null)
+    .maybeSingle()
+  if (error) throw new Error(`getInvokingEntryText failed: ${error.message}`)
+  if (!entry?.content?.trim()) return null
+
+  // 2. it must be linked to something (visibility rule)
+  const { count, error: linkError } = await db
+    .from('context_links')
+    .select('id', { count: 'exact', head: true })
+    .eq('entry_id', entry_id)
+    .eq('state', 'active')
+  if (linkError) throw new Error(`getInvokingEntryText link check failed: ${linkError.message}`)
+  if (!count) return null
+
+  return entry.content.trim()
+}

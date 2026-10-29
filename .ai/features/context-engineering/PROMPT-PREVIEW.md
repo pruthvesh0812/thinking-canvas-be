@@ -17,6 +17,24 @@ npm run prompt:preview -- pricing-canvas --no-color            # plain text (als
 npm run prompt:preview -- pricing-canvas --verbose             # also show the retrieval logger lines (muted by default)
 ```
 
+### A real canvas (read-only)
+
+```bash
+npm run prompt:preview -- --canvas <canvas_id> --focus <node_uuid>[,<uuid>] [--agent expander] [--source-node | --entry <note_id>]
+```
+
+Loads real data from Supabase through the same `createDbSource` the agent run will use, builds the thread memory from the
+canvas's real agent threads and loads the real NEGATIVE CONSTRAINTS block (`buildRejectionBlock`).
+
+- `--agent` (default `expander`) decides which constraints apply and which default task is used.
+- `--source-node`: the (first) focus node's own text is the request. `--entry <id>`: the text of that context entry is the
+  request (it must be on this canvas, not deleted, and linked). Neither flag = the agent's default task.
+- Needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (the script loads `.env` itself, only in this mode; it never prints them).
+- **Read-only:** it only runs selects. Nothing is written, no model is called.
+- Not combinable with a fixture name. Fixture mode needs no `.env` at all.
+- This replaces the old `scripts/inspect-context.ts` / `npm run inspect:context`, which was **removed** (it imported
+  functions of the old serializer that no longer exist).
+
 A bare name means `scripts/fixtures/<name>.json`; anything with a `/` or ending in `.json` is read as a path.
 
 Output: the prompt exactly as the model receives it, a table of estimated tokens per layer and the total
@@ -74,6 +92,7 @@ Everything lives in `src/context/assemble.ts`.
 | File | Role |
 |---|---|
 | `scripts/prompt-preview.ts` | The CLI (arguments, printing). Prints to stdout directly: a report-printing script is the exception to the `logger` rule. |
+| `scripts/lib/real-canvas.ts` | Real-canvas mode: loads a canvas from Supabase (read-only) into the same inputs a fixture gives. DB access is injected, so it is unit-tested with fakes. |
 | `scripts/fixtures/*.json` | Example canvases. |
 | `src/context/__fixtures__/load-fixture.ts` | JSON fixture -> the shapes the real code uses. |
 | `src/context/__fixtures__/run-preview.ts` | Real `retrieveS1` + real `assemblePrompt`, shared by the CLI and tests. |
