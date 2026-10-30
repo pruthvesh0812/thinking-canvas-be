@@ -2,7 +2,7 @@
 feature: "context-engineering"
 type: story
 created: 2026-10-24
-status: draft — decisions agreed in conversation (rev 5); slice 0 not started
+status: in progress. Slices 0, 1 and 2 built (Expander end to end, ghost-status for structures); slice 3 next
 git_branch: "ccr-7bd29be2-xp0ss9"
 pr_url: "[PLACEHOLDER]"
 source_spec: "context-engineering.zip (16 files, README + 01–13 + appendices A/B), supplied 2026-10-21"

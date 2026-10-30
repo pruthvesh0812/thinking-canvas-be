@@ -12,6 +12,7 @@
 
 import { logger } from '../lib/logger.js'
 import { assemblePrompt, escapeData } from '../context/assemble.js'
+import { initialNodeStatus } from '../context/ghost-decisions.js'
 import { createIdMap } from '../context/ids.js'
 import { retrieveS1, type S1Source } from '../context/retrieve-s1.js'
 import { AGENT_SCOPE } from '../context/settings.js'
@@ -149,7 +150,13 @@ export async function executeAgentRun(runId: string, deps: ExecuteRunDeps): Prom
       role: 'assistant',
       turn_type: 'ghost_structure',
       content: summarise(structure),
-      ghost_structure: { run_id: run.id, focus_node_ids: retrieval.focus_node_ids, structure, status: 'pending' },
+      ghost_structure: {
+        run_id: run.id,
+        focus_node_ids: retrieval.focus_node_ids,
+        structure,
+        node_status: initialNodeStatus(structure), // every node waits for the user
+        status: 'pending',
+      },
       timestamp: new Date().toISOString(),
     })
 

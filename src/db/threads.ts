@@ -1,5 +1,5 @@
 import { db } from './client.js'
-import type { AgentThread, AgentRole, ThreadMessage, GhostStatus } from '../../types/index.js'
+import type { AgentThread, AgentRole, ThreadMessage, GhostNodeStatus } from '../../types/index.js'
 
 export async function getByCanvas(
   canvas_id: string,
@@ -76,15 +76,13 @@ export async function appendMessage(
   if (error) throw new Error(`appendMessage failed: ${error.message}`)
 }
 
-// Mutates the pair_status of an existing ghost_pair turn in place. Unlike
-// appendMessage (atomic, to avoid append races between concurrent agent turns),
-// this is a read-modify-write — but ghost accept/reject is a single-user,
-// user-driven action with no concurrent writer to the same turn, so there is no
-// race to guard against here.
-export async function setGhostPairStatus(
+// Saves the user's decision on a ghost structure turn: the per-node statuses and the whole-turn status.
+// Read-modify-write (not atomic like appendMessage), which is fine here: the user decides one ghost
+// at a time and the agent that wrote the turn is finished, so nobody else writes to this turn.
+export async function setGhostStructureDecision(
   thread_id: string,
   turn_index: number,
-  pair_status: GhostStatus
+  decision: { node_status: Record<string, GhostNodeStatus>; status: 'pending' | 'accepted' | 'rejected' },
 ): Promise<void> {
   const { data, error } = await db
     .from('agent_threads')
@@ -92,21 +90,22 @@ export async function setGhostPairStatus(
     .eq('id', thread_id)
     .single()
 
-  if (error) throw new Error(`setGhostPairStatus read failed: ${error.message}`)
+  if (error) throw new Error(`setGhostStructureDecision read failed: ${error.message}`)
 
   const messages = (data.messages ?? []) as ThreadMessage[]
   const turn = messages[turn_index]
-  if (!turn || turn.turn_type !== 'ghost_pair') {
-    throw new Error(`setGhostPairStatus: no ghost_pair turn at index ${turn_index}`)
+  if (!turn || turn.turn_type !== 'ghost_structure') {
+    throw new Error(`setGhostStructureDecision: no ghost_structure turn at index ${turn_index}`)
   }
-  turn.ghost_pair.pair_status = pair_status
+  turn.ghost_structure.node_status = decision.node_status
+  turn.ghost_structure.status = decision.status
 
   const { error: updateError } = await db
     .from('agent_threads')
     .update({ messages })
     .eq('id', thread_id)
 
-  if (updateError) throw new Error(`setGhostPairStatus update failed: ${updateError.message}`)
+  if (updateError) throw new Error(`setGhostStructureDecision update failed: ${updateError.message}`)
 }
 
 export async function updateActiveInsights(

@@ -296,6 +296,10 @@ export type ThreadMessage =
         run_id: string
         focus_node_ids: string[]
         structure: GhostStructure
+        // ghost_id -> status. Missing (turns saved before this existed) = every node pending.
+        node_status?: Record<string, GhostNodeStatus>
+        // Whole-turn status, worked out from node_status (see src/context/ghost-decisions.ts).
+        // 'pending' while any first-level node waits for the user: this is what blocks canAgentFire.
         status: 'pending' | 'accepted' | 'rejected'
       }
       timestamp: string
@@ -496,6 +500,15 @@ export type GhostNode = { ghost_id: string; content: string; frame_id: string | 
 // from / to are node UUIDs or ghost node ids.
 export type GhostEdge = { from: string; to: string; label: string | null }
 
+// Where one ghost node stands. Stored on the thread turn (never sent in chunks).
+//   pending   waiting for the user
+//   accepted  the user accepted it (the frontend wrote it to the canvas as a real node)
+//   rejected  the user rejected it
+//   saved_off its parent was rejected and the user chose to KEEP the subtree: it hangs, unconnected,
+//             and can still be accepted on its own later
+//   deleted   removed together with a rejected parent (subtree delete)
+export type GhostNodeStatus = 'pending' | 'accepted' | 'rejected' | 'saved_off' | 'deleted'
+
 // A whole proposal. Streamed in pieces, saved whole on the thread when the run ends.
 export type GhostStructure = {
   frames: GhostFrame[]
@@ -678,15 +691,20 @@ export const agentRunRequestSchema = z.object({
 
 export type AgentRunRequest = z.infer<typeof agentRunRequestSchema>
 
-// POST /api/ghost-status
+// POST /api/ghost-status: the user decided about ONE ghost node of a ghost structure.
+// Accept is per node. Reject may need a second answer: if rejecting would leave other ghost nodes
+// hanging, `subtree_action` says what to do with them (the response lists them when it is missing).
 export const ghostStatusSchema = z.object({
   thread_id: z.string().uuid(),
   turn_index: z.number().int().nonnegative(),
   canvas_id: z.string().uuid(),
   session_id: z.string().uuid(),
-  context_node_status: z.enum(['accepted', 'rejected']),
-  question_node_status: z.enum(['accepted', 'rejected']).nullable(),
-  rejection_reason: z.enum(['too_abstract', 'too_technical', 'skip_for_now']).optional(),
+  ghost_id: z.string().uuid(),
+  status: z.enum(['accepted', 'rejected']),
+  // only for a reject that has a subtree: delete it, or keep it saved off
+  subtree_action: z.enum(['delete', 'save_off']).optional(),
+  // Free text the user typed, or null/missing. No reason = the outcome is recorded but teaches nothing.
+  rejection_reason: z.string().trim().max(500).nullable().optional(),
   interacted_at: z.number().int(),  // unix ms timestamp
 })
 

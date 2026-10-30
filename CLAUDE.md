@@ -8,7 +8,7 @@
 
 ## What ThinkingCanvas API Does
 
-Receives canvas events from the frontend, runs the AI agent pipeline, and streams ghost node pairs back via Upstash Redis pub/sub → SSE. All data persists to Supabase PostgreSQL. No Supabase Realtime — the canvas is single-user, and backend never pushes unsolicited updates to user nodes or edges. Ghost nodes are the only server-to-client push, streamed via Redis.
+Receives canvas events from the frontend, runs the AI agent pipeline, and streams ghost structures (nodes, frames and edges) back via Upstash Redis pub/sub → SSE. All data persists to Supabase PostgreSQL. No Supabase Realtime — the canvas is single-user, and backend never pushes unsolicited updates to user nodes or edges. Ghost nodes are the only server-to-client push, streamed via Redis.
 
 ---
 
@@ -158,7 +158,7 @@ thinking-canvas-api/
 | Zod schemas | camelCase + Schema | `canvasEventSchema`, `ghostStatusSchema` |
 | Inngest events | `domain/noun.verb` | `canvas/node.created`, `canvas/ghost.rejected` |
 | Redis channels | `canvas:stream:${sessionId}` | |
-| Spawn message types | string literal | `spawn` \| `chunk` \| `done` |
+| Stream message types | string literal | `structure_start` \| `ghost_chunk` \| `structure_done` \| `structure_error` |
 | Git branches | `<type>/<short-title>-<timestamp>` | `feature/rejection-insights-injection-2026-06-20T1430` |
 
 > Branch naming — full spec (allowed types, timestamp format) in `CODING-STANDARDS.md`. Never use randomly generated branch names.
@@ -175,9 +175,9 @@ thinking-canvas-api/
 6. Shared types in `types/index.ts` — never duplicate
 7. RLS on every Supabase table
 8. No Supabase Realtime — backend never pushes unsolicited state to frontend
-9. Redis pub/sub = the ghost stream only (`spawn`/`node_type`/`chunk`/`done`) — no canvas *state* over Redis
+9. Redis pub/sub = the ghost stream only (`structure_start`/`ghost_chunk`/`structure_done`/`structure_error`; the old `spawn`/`chunk`/`done` only for the Observer until slice 3) — no canvas *state* over Redis
 10. Load active rejection_insights before every agent call — inject as NEGATIVE CONSTRAINTS
-11. Ghost structure (nodes + edges) defined by frontend from spawn descriptor — agent generates content only
+11. Ghost structure comes from the agent as validated `elements` (nodes, frames, links); the backend mints the ids and sends chunks (`src/context/ghost-output.ts`); the frontend only draws it and the user accepts per node
 12. Never import `@ai-sdk/google` outside `src/lib/llm.ts` — all model instantiation centralised there (see `LLM-LAYER.md`)
 13. Every tool, agent, pipeline, and route must use `logger` from `src/lib/logger.ts` — never `console.log` directly (see `LOGGING.md`)
 
@@ -209,7 +209,7 @@ npm run inngest:dev        # Start Inngest dev server separately
 | All AI models | Google AI (single provider) |
 | Agent memory | Custom canvas-scoped threads in Supabase |
 | Ghost rejection learning | Rejection Insights Engine → NEGATIVE CONSTRAINTS in prompt |
-| Ghost structure definition | Frontend HTML/components — backend sends spawn descriptor only |
+| Ghost structure definition | Agent writes `elements`; backend validates, mints ids, streams `ghost_chunk`s; frontend draws |
 
 ---
 

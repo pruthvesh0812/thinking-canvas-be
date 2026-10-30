@@ -526,14 +526,37 @@ GhostEdge  = { from, to, label | null }                     // from/to = a real 
   delivered, so there is no extra call. A node reachable two ways takes the shorter depth.
 - Edges have no type anymore, only an optional free-text `label` (your `edges` inserts must stop sending `edge_type`; the column is dropped).
 
-### 12.3 Accepting and rejecting (decided, endpoint not built yet)
+### 12.3 Accepting and rejecting: `POST /api/ghost-status`
 
-- Accept is **per node**: the frontend writes the accepted node (and the edge you choose) to Supabase as it does today.
-- Rejecting a node asks the user: **delete its whole subtree**, or **keep the subtree saved off** (unconnected; any of them can later be
-  accepted on its own, landing on the canvas unconnected). Hidden children of an accepted node stay pending.
-- Rejection learning uses only nodes the user actually rejected.
-- The `POST /api/ghost-status` payload for structures is **not final** (planned: node id + `reject_scope: node | subtree` +
-  `subtree_action: delete | save_off`). Do not build against the old pair payload.
+The user decides about ONE ghost node at a time. (The old pair payload with `context_node_status` is gone: it answers 400.)
+
+```json
+{ "thread_id": "uuid", "turn_index": 3, "canvas_id": "uuid", "session_id": "uuid",
+  "ghost_id": "uuid", "status": "accepted" | "rejected",
+  "subtree_action": "delete" | "save_off",        // only for a reject that leaves other ghosts hanging
+  "rejection_reason": "free text" | null,          // optional
+  "interacted_at": 1730000000000 }
+```
+`thread_id` + `turn_index` come from `structure_done`.
+
+- **Accept** is per node. You write the accepted node to Supabase yourself (using its `ghost_id` as the node id) and send the
+  usual `ghost.accepted` canvas-event, as today. This endpoint only records the decision.
+- **Reject** may leave ghost nodes hanging: the ones that were connected to the canvas only *through* the rejected node (a node with
+  another surviving parent is not affected). If there are any and `subtree_action` is missing, the answer is
+  **400 `{ code: "subtree_action_required", subtree: [ghost_id, ...] }`**: ask the user, then send again with
+  - `delete`: the subtree is removed with the node, or
+  - `save_off`: the subtree is kept, **unconnected**. Each saved-off node can later be accepted on its own (it lands on the canvas
+    unconnected; the user draws edges by hand) or rejected on its own.
+- A reject with no subtree needs no question.
+- Hidden children of an **accepted** node stay pending until the user acts on them.
+- Success: **200 `{ ok, turn_status, changed: [{ ghost_id, status }] }`**. `status` is one of `accepted | rejected | saved_off | deleted`;
+  `changed` lists the node plus anything its reject deleted or saved off. `turn_status` is `pending` while a **first-level (depth 1)**
+  ghost waits, so deeper unopened ghosts never block the agent. When it is no longer `pending`, the agent can run on that focus again.
+- Errors: `400` unknown `ghost_id` / no structure at `turn_index` / `subtree_action_required`, `404` thread not found (or not this
+  canvas), `409` the node was already decided.
+- **Learning:** only the node the user actually rejected can teach the agent, never the children deleted or saved off with it. A
+  rejection with no reason records the outcome and teaches nothing. Free-text reasons are recorded but start teaching in the
+  Rejection Insights rework (story slice 4); today only the three legacy reasons (`too_abstract`, `too_technical`, `skip_for_now`) fire the learning.
 
 ### 12.4 Edge labels
 

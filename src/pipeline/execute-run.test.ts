@@ -71,6 +71,7 @@ describe('executeAgentRun', () => {
     const turn = (deps.appendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1]
     expect(turn.turn_type).toBe('ghost_structure')
     expect(turn.ghost_structure.status).toBe('pending')
+    expect(Object.values(turn.ghost_structure.node_status)).toEqual(['pending']) // every node waits
     expect(turn.ghost_structure.focus_node_ids).toEqual(['n2-id'])
     expect(turn.ghost_structure.structure.nodes[0].content).toBe('a new idea')
 
