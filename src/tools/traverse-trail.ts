@@ -16,7 +16,7 @@ export const traverse_trail = createTool({
       node_id: z.string(),
       summary: z.string().nullable(),
       direction_marker: z.string().nullable(),
-      edge_type: z.string(),
+      label: z.string().nullable(),
     })),
   }),
   // canvas_id is server-injected via requestContext — see get_content.ts.
@@ -28,7 +28,7 @@ export const traverse_trail = createTool({
     const canvas_id = requestContext!.get('canvas_id') as string
     logger.info('[tool:traverse_trail] called', { canvas_id, start_node_id, direction, max_hops })
 
-    const trail: { node_id: string; summary: string | null; direction_marker: string | null; edge_type: string }[] = []
+    const trail: { node_id: string; summary: string | null; direction_marker: string | null; label: string | null }[] = []
     let current_id = start_node_id
     const visited = new Set<string>()
 
@@ -38,7 +38,7 @@ export const traverse_trail = createTool({
 
       const edgeQuery = db
         .from('edges')
-        .select('id, from_node_id, to_node_id, edge_type')
+        .select('id, from_node_id, to_node_id, label')
         .eq('canvas_id', canvas_id)
 
       const { data: edges, error: edgeErr } = direction === 'forward'
@@ -80,7 +80,7 @@ export const traverse_trail = createTool({
         node_id: node.id,
         summary: node.summary,
         direction_marker: node.direction_marker,
-        edge_type: edge.edge_type,
+        label: edge.label,
       })
 
       current_id = next_id

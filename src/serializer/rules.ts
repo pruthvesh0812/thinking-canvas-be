@@ -61,28 +61,18 @@ export const SERIALIZATION_RULES: Record<AgentRole, SerializationRule> = {
     includeClickMoment: true,
     threadType: 'canvas-map',
   },
-  articulator: {
-    includeRejectionInsights: false,
+  // Placeholder to satisfy Record<AgentRole, …>. General never runs through this serializer:
+  // it is built on src/context/* (story.md D6); this file is deleted in Slice 8.
+  general: {
+    includeRejectionInsights: true,
     includeNorthStar: true,
-    includeClickMoment: false,
+    includeClickMoment: true,
     activeNode: 'full',
-    tier2: 'full+both-trails',
-    tier3: 'na',
-    tier4: 'na',
+    tier2: 'full',
+    tier3: 'summary+marker',
+    tier4: 'trail+markers',
     includeAttunement: false,
     includeGhostHistory: 'none',
     threadType: 'canvas-stateful',
-  },
-  outer_subconscious: {
-    includeRejectionInsights: false,
-    includeNorthStar: true,
-    includeClickMoment: false,
-    activeNode: 'full',
-    tier2: 'na',
-    tier3: 'na',
-    tier4: 'na',
-    includeAttunement: false,
-    includeGhostHistory: 'none',
-    threadType: 'stateless',
   },
 }

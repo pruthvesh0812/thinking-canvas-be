@@ -8,8 +8,7 @@ export type AgentRole =
   | 'expander'
   | 'stress_tester'
   | 'observer'
-  | 'outer_subconscious'
-  | 'articulator'
+  | 'general'
 
 export type ContextNodeType =
   | 'reframe'
@@ -18,14 +17,6 @@ export type ContextNodeType =
   | 'reference'
   | 'contradiction'
   | 'appreciation'
-
-// 'relate' is the DELIBERATE "articulate this connection" gesture — the only
-// edge type that triggers the Articulator immediately. 'logical' (and doubt /
-// associative) are silent structural edges: drawing one just rearranges the
-// canvas, absorbed into the next debounced pass, so the user isn't ambushed by
-// a ghost every time they tidy up their thinking. 'question' still fires the
-// Outer Subconscious.
-export type EdgeType = 'logical' | 'doubt' | 'question' | 'associative' | 'relate'
 
 // Which side of a node the edge attaches to. Frontend-owned (React Flow
 // handle id); backend never reads it. Enforced by CHECK constraint on the
@@ -133,11 +124,10 @@ export type Edge = {
   session_id: string
   from_node_id: string
   to_node_id: string
-  edge_type: EdgeType
   both_existing: boolean
   // Frontend-owned handle attachments — restored on refetch so an edge
   // reattaches to the exact same sides it left. Backend never reads or
-  // writes these; agent pipelines route off edge_type / both_existing only.
+  // writes these; agent pipelines route off both_existing only.
   // Nullable to keep pre-migration edges valid.
   from_handle: EdgeHandle | null
   to_handle: EdgeHandle | null
@@ -297,6 +287,24 @@ export type ThreadMessage =
       timestamp: string
     }
   | {
+      // A finished ghost structure from one agent run. The nodes/edges are stored so
+      // the thread knows what was proposed; the user's accept/reject is recorded on it.
+      role: 'assistant'
+      turn_type: 'ghost_structure'
+      content: string          // short text of the proposal, for prose context only
+      ghost_structure: {
+        run_id: string
+        focus_node_ids: string[]
+        structure: GhostStructure
+        // ghost_id -> status. Missing (turns saved before this existed) = every node pending.
+        node_status?: Record<string, GhostNodeStatus>
+        // Whole-turn status, worked out from node_status (see src/context/ghost-decisions.ts).
+        // 'pending' while any first-level node waits for the user: this is what blocks canAgentFire.
+        status: 'pending' | 'accepted' | 'rejected'
+      }
+      timestamp: string
+    }
+  | {
       // The Observer never writes a ghost pair — this turn just points at the
       // structure it produced. Per-edge outcomes are read live from
       // observer_structures/observer_edges at serialize time, never cached
@@ -408,6 +416,107 @@ export type RejectionInsight = {
 }
 
 // ─────────────────────────────────────────────
+// Agent runs + ghost structures (context-engineering Slice 2)
+// ─────────────────────────────────────────────
+// A run = one agent invocation. Agents never write nodes/edges: they return a
+// "ghost structure" (new nodes + edges). Nothing lands on the canvas until the
+// user accepts it.
+
+export type AgentRunStatus = 'queued' | 'running' | 'done' | 'failed'
+
+// Which row holds the text that invoked the agent (e.g. "@expander dig into this").
+export type AgentRunSourceType = 'context_entry' | 'node'
+
+export type ContextScope = 'S1' | 'S2' | 'S3'
+
+export type AgentRun = {
+  id: string
+  canvas_id: string
+  session_id: string | null
+  agent: AgentRole
+  focus_node_ids: string[]
+  source_type: AgentRunSourceType
+  source_id: string
+  status: AgentRunStatus
+  scope: ContextScope | null
+  error: string | null
+  thread_id: string | null
+  created_at: string
+  finished_at: string | null
+}
+
+// ── What retrieval hands to prompt assembly ──
+
+// One note the user attached to a node, an edge, or the canvas.
+export type ContextNote = { id: string; content: string; created_at: string }
+
+// full  = text + all visible notes.   title = short summary + how many notes it has.
+export type LoadedNodeTier = 'full' | 'title'
+
+// Why a node is in the prompt (the agent is told, so it knows how to treat it).
+export type LoadedNodeReason = 'focus' | 'hop1' | 'ancestor'
+
+export type LoadedNode = {
+  id: string
+  seq: number                  // the n{seq} the model will see
+  tier: LoadedNodeTier
+  reason: LoadedNodeReason
+  content: string | null       // node text (always set for full tier)
+  summary: string | null
+  notes: ContextNote[]         // full tier only, oldest first
+  note_count: number           // all tiers, so a title node can say "(2 notes)"
+}
+
+export type LoadedEdge = {
+  id: string
+  from_node_id: string         // parent
+  to_node_id: string           // child
+  label: string | null
+  notes: ContextNote[]
+}
+
+export type RetrievalResult = {
+  scope: ContextScope
+  focus_node_ids: string[]
+  nodes: LoadedNode[]          // focus first, then 1-hop, then ancestors
+  edges: LoadedEdge[]          // only edges whose both ends are in `nodes`
+  canvas_notes: ContextNote[]  // notes about the canvas as a whole
+}
+
+// What the frontend gets. All ids are real: node UUIDs, or ghost ids minted by the backend.
+// (The model never sees these. It writes n5 / t1 / f1, see src/context/ghost-output.ts.)
+
+// A frame is a box drawn around several ghost nodes. Its text explains how the nodes
+// inside relate, or gives context about them. It has no edges of its own: the edges go
+// from the existing node to the ghost nodes inside.
+export type GhostFrame = { ghost_id: string; content: string }
+
+// frame_id = the frame this node sits in (null = free standing).
+// depth = steps from the existing canvas node it hangs off (1 = first level). The frontend
+// shows depth 1 first and reveals depth N+1 when the user clicks a depth N node.
+// Computed by the backend, never written by the model.
+export type GhostNode = { ghost_id: string; content: string; frame_id: string | null; depth: number }
+
+// from / to are node UUIDs or ghost node ids.
+export type GhostEdge = { from: string; to: string; label: string | null }
+
+// Where one ghost node stands. Stored on the thread turn (never sent in chunks).
+//   pending   waiting for the user
+//   accepted  the user accepted it (the frontend wrote it to the canvas as a real node)
+//   rejected  the user rejected it
+//   saved_off its parent was rejected and the user chose to KEEP the subtree: it hangs, unconnected,
+//             and can still be accepted on its own later
+//   deleted   removed together with a rejected parent (subtree delete)
+export type GhostNodeStatus = 'pending' | 'accepted' | 'rejected' | 'saved_off' | 'deleted'
+
+// A whole proposal. Streamed in pieces, saved whole on the thread when the run ends.
+export type GhostStructure = {
+  frames: GhostFrame[]
+  nodes: GhostNode[]
+  edges: GhostEdge[]
+}
+
+// ─────────────────────────────────────────────
 // Streaming types
 // ─────────────────────────────────────────────
 
@@ -431,7 +540,6 @@ export type SpawnDescriptor = {
     agent_role: AgentRole
   }
   context_edge: {
-    edge_type: EdgeType
     from: string  // trigger_node_id
     to: string    // context ghost_id
   }
@@ -441,13 +549,18 @@ export type SpawnDescriptor = {
     node_type: 'question'
   }
   question_edge?: {
-    edge_type: EdgeType
     from: string  // context ghost_id
     to: string    // question ghost_id
   }
 }
 
 export type RedisMessage =
+  // ── New ghost-structure stream (agents built on src/context/*) ──
+  | { type: 'structure_start'; run_id: string; agent: AgentRole; focus_node_ids: string[] }
+  | { type: 'ghost_chunk'; run_id: string; frames: GhostFrame[]; nodes: GhostNode[]; edges: GhostEdge[] }
+  | { type: 'structure_done'; run_id: string; thread_id: string; turn_index: number }
+  | { type: 'structure_error'; run_id: string; reason: string }
+  // ── Old ghost-pair stream (Observer only, until Slice 3) ──
   | { type: 'spawn'; descriptor: SpawnDescriptor }
   | { type: 'chunk'; target: string; data: string }  // target = ghost_id
   // Server-side marker split: the token layer strips the agent's [NODE_TYPE: x]
@@ -522,7 +635,7 @@ export const canvasEventSchema = z
     // re-derived on the backend).
     node_ids: z.array(z.string().uuid()).min(1).optional(),
     agent_role: z
-      .enum(['expander', 'stress_tester', 'observer', 'outer_subconscious', 'articulator'])
+      .enum(['expander', 'stress_tester', 'observer', 'general'])
       .optional(),
     event_type: z.enum([
       'node.created',
@@ -561,15 +674,37 @@ export const canvasEventSchema = z
 
 export type CanvasEvent = z.infer<typeof canvasEventSchema>
 
-// POST /api/ghost-status
+// POST /api/agent/run
+// The frontend detected "@expander ..." (etc.) in a node's text or a context entry
+// and asks the backend to run that agent. `source` is the row that holds the text;
+// the backend reads it live (never trusts text from the request body).
+export const agentRunRequestSchema = z.object({
+  canvas_id: z.string().uuid(),
+  session_id: z.string().uuid(),
+  agent: z.enum(['expander', 'stress_tester', 'general']),
+  focus_node_ids: z.array(z.string().uuid()),
+  source: z.object({
+    type: z.enum(['context_entry', 'node']),
+    id: z.string().uuid(),
+  }),
+})
+
+export type AgentRunRequest = z.infer<typeof agentRunRequestSchema>
+
+// POST /api/ghost-status: the user decided about ONE ghost node of a ghost structure.
+// Accept is per node. Reject may need a second answer: if rejecting would leave other ghost nodes
+// hanging, `subtree_action` says what to do with them (the response lists them when it is missing).
 export const ghostStatusSchema = z.object({
   thread_id: z.string().uuid(),
   turn_index: z.number().int().nonnegative(),
   canvas_id: z.string().uuid(),
   session_id: z.string().uuid(),
-  context_node_status: z.enum(['accepted', 'rejected']),
-  question_node_status: z.enum(['accepted', 'rejected']).nullable(),
-  rejection_reason: z.enum(['too_abstract', 'too_technical', 'skip_for_now']).optional(),
+  ghost_id: z.string().uuid(),
+  status: z.enum(['accepted', 'rejected']),
+  // only for a reject that has a subtree: delete it, or keep it saved off
+  subtree_action: z.enum(['delete', 'save_off']).optional(),
+  // Free text the user typed, or null/missing. No reason = the outcome is recorded but teaches nothing.
+  rejection_reason: z.string().trim().max(500).nullable().optional(),
   interacted_at: z.number().int(),  // unix ms timestamp
 })
 

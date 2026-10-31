@@ -8,7 +8,7 @@
 
 ## What ThinkingCanvas API Does
 
-Receives canvas events from the frontend, runs the AI agent pipeline, and streams ghost node pairs back via Upstash Redis pub/sub → SSE. All data persists to Supabase PostgreSQL. No Supabase Realtime — the canvas is single-user, and backend never pushes unsolicited updates to user nodes or edges. Ghost nodes are the only server-to-client push, streamed via Redis.
+Receives canvas events from the frontend, runs the AI agent pipeline, and streams ghost structures (nodes, frames and edges) back via Upstash Redis pub/sub → SSE. All data persists to Supabase PostgreSQL. No Supabase Realtime — the canvas is single-user, and backend never pushes unsolicited updates to user nodes or edges. Ghost nodes are the only server-to-client push, streamed via Redis.
 
 ---
 
@@ -18,6 +18,18 @@ Receives canvas events from the frontend, runs the AI agent pipeline, and stream
 2. **Simplicity** — Write the minimum code that satisfies the requirement.
 3. **Surgical** — Change only what the task requires.
 4. **Goal-Driven** — Every line must trace back to the task.
+
+---
+
+## Code Readability — TOP PRIORITY (owner's standing instruction)
+
+Applies to **every line of code you write, in every session**. It outranks the "minimum code" instinct in Rule 2 when the two pull apart.
+
+1. **Comment every important step** so that reading *only the comments*, top to bottom, gives the full logical flow of the function (what happens, in what order, and why).
+2. **Write comments for humans, in plain simple words.** Short, intuitive, like explaining to a teammate. **Clarity beats grammar**: broken or casual grammar is fine if it makes the idea easier to get (e.g. `// no focus node? then use whole canvas`).
+3. **Write intuitive code**: clear descriptive names, small steps, early returns, no clever tricks. A new reader should follow it without decoding.
+4. **Use standard software-engineering terms where they exist** (`error`, `exception`, `validation`, `retry`, `payload`, `timeout`, `fallback`...). Don't invent a plainer word for them: name a field `errors`, not `problems`. Plain-English comments (rule 2) are for explaining the *logic*; identifiers and the terms of the trade stay conventional.
+5. Don't narrate trivia (`// increment i`). Comment the steps, decisions and non-obvious reasons.
 
 ---
 
@@ -54,8 +66,6 @@ thinking-canvas-api/
 │   │   ├── expander.ts
 │   │   ├── stress-tester.ts
 │   │   ├── observer.ts
-│   │   ├── outer-subconscious.ts
-│   │   ├── articulator.ts
 │   │   └── attunement.ts
 │   ├── tools/              # Cursor tools
 │   │   ├── get-content.ts
@@ -67,8 +77,6 @@ thinking-canvas-api/
 │   │   ├── get-branch.ts
 │   │   └── semantic-promote.ts
 │   ├── pipeline/           # Inngest functions
-│   │   ├── articulator-pipeline.ts # immediate on existing-node edge
-│   │   ├── outer-sub-pipeline.ts   # immediate on question edge
 │   │   ├── rejection-insights.ts   # immediate on ghost rejection
 │   │   └── session-complete.ts     # on Session Complete
 │   ├── serializer/
@@ -150,7 +158,7 @@ thinking-canvas-api/
 | Zod schemas | camelCase + Schema | `canvasEventSchema`, `ghostStatusSchema` |
 | Inngest events | `domain/noun.verb` | `canvas/node.created`, `canvas/ghost.rejected` |
 | Redis channels | `canvas:stream:${sessionId}` | |
-| Spawn message types | string literal | `spawn` \| `chunk` \| `done` |
+| Stream message types | string literal | `structure_start` \| `ghost_chunk` \| `structure_done` \| `structure_error` |
 | Git branches | `<type>/<short-title>-<timestamp>` | `feature/rejection-insights-injection-2026-06-20T1430` |
 
 > Branch naming — full spec (allowed types, timestamp format) in `CODING-STANDARDS.md`. Never use randomly generated branch names.
@@ -167,9 +175,9 @@ thinking-canvas-api/
 6. Shared types in `types/index.ts` — never duplicate
 7. RLS on every Supabase table
 8. No Supabase Realtime — backend never pushes unsolicited state to frontend
-9. Redis pub/sub = the ghost stream only (`spawn`/`node_type`/`chunk`/`done`) — no canvas *state* over Redis
+9. Redis pub/sub = the ghost stream only (`structure_start`/`ghost_chunk`/`structure_done`/`structure_error`; the old `spawn`/`chunk`/`done` only for the Observer until slice 3) — no canvas *state* over Redis
 10. Load active rejection_insights before every agent call — inject as NEGATIVE CONSTRAINTS
-11. Ghost structure (nodes + edges) defined by frontend from spawn descriptor — agent generates content only
+11. Ghost structure comes from the agent as validated `elements` (nodes, frames, links); the backend mints the ids and sends chunks (`src/context/ghost-output.ts`); the frontend only draws it and the user accepts per node
 12. Never import `@ai-sdk/google` outside `src/lib/llm.ts` — all model instantiation centralised there (see `LLM-LAYER.md`)
 13. Every tool, agent, pipeline, and route must use `logger` from `src/lib/logger.ts` — never `console.log` directly (see `LOGGING.md`)
 
@@ -201,7 +209,7 @@ npm run inngest:dev        # Start Inngest dev server separately
 | All AI models | Google AI (single provider) |
 | Agent memory | Custom canvas-scoped threads in Supabase |
 | Ghost rejection learning | Rejection Insights Engine → NEGATIVE CONSTRAINTS in prompt |
-| Ghost structure definition | Frontend HTML/components — backend sends spawn descriptor only |
+| Ghost structure definition | Agent writes `elements`; backend validates, mints ids, streams `ghost_chunk`s; frontend draws |
 
 ---
 
@@ -223,6 +231,8 @@ started** — `FRONTEND-CONTRACT.md` is its build-against contract.
 | Anything that makes agents run on node creation (Expander / Stress-Tester have no caller), plus how agents consume context notes | Pending the agent redesign — see **Pivot** below |
 | `ignored` ghost status, `updatePhase` (uncalled), `carry_forward_ids` handling | Referenced in context docs; see `FRONTEND-CONTRACT.md` §10–11 |
 
+**Next build (2026-10-25) — context engineering.** Agent context, output and roster are being redesigned. Start at `.ai/features/context-engineering/HANDOFF.md`; `story.md` there is the source of truth and overrides older docs where they conflict.
+
 **Pivot (2026-10-16) — text-only context capture.** The **Intervention Spectrum
 was removed** (judge, offers, consent timer, `waiting`/`offer`/`withdraw`,
 Impact Check, receptivity, `canvas_version`/`latest_seq`) — it is no longer part
@@ -231,8 +241,8 @@ of the product, as of now. Its design record is kept, shelved, in
 `feature/pivot-text-context-capture-2026-10-16T1703` branch. In its place the
 backend gained the context-capture schema (`context_entries`, `context_links`,
 `context_attachments`, `component_removals`, `system_config`, `nodes.seq`,
-`edges.label`) — see `CONTEXT-CAPTURE.md`. What still runs: the explicit-edge agents (Articulator,
-Outer Subconscious), Session Complete (Observer), ghost streaming and Rejection
+`edges.label`) — see `CONTEXT-CAPTURE.md`. What still runs (Articulator and Outer Subconscious were removed in context-engineering Slice 1a):
+Session Complete (Observer), ghost streaming and Rejection
 Insights. The next piece of work is redefining how agents are driven and how they
 read notes.
 

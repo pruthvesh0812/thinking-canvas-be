@@ -476,3 +476,88 @@ deletes the FE workarounds noted above.
 > **Resolved (2026-08-16):** row 6 — second active session per canvas — is
 > fixed. `session/start` now returns the existing active session (200,
 > idempotent) instead of creating a sibling; see §5.3.
+
+---
+
+## 12. Agent runs and ghost structures (context engineering, 2026-10-29) — READ THIS FIRST
+
+> **This section wins over §4–§7 where they disagree.** The Articulator and Outer Subconscious are removed, no
+> agent is triggered by drawing an edge, and the ghost *pair* (`spawn` / `chunk` / `node_type` / `done`) is being
+> replaced by a ghost *structure*. Until the Observer moves over (story slice 3) the old messages still exist for it.
+> Source of truth: `.ai/features/context-engineering/story.md`.
+
+### 12.1 Starting a run: `POST /api/agent/run`
+
+The user addresses an agent in a node's text or a note (`@expander ...`). **The frontend works out which agent** and sends:
+
+```json
+{ "canvas_id": "uuid", "session_id": "uuid", "agent": "expander",
+  "focus_node_ids": ["uuid"], "source": { "type": "node" | "context_entry", "id": "uuid" } }
+```
+
+- `source` is the row that holds the invoking text. The backend reads that text live; never send the text itself.
+- `agent`: `expander` works today. `stress_tester` and `general` answer `501` until built. The Observer has its own route later.
+- Answers **202 `{ run_id }`** immediately. The result arrives on the session stream (§6).
+- Errors: `400` bad payload / focus or source not on this canvas / session not on this canvas, `403` tier, `404` canvas or
+  session, `409` the same agent is already running on this focus **or its earlier ghosts are still undecided**, `501` agent not built.
+- Different agents may run at the same time on the same focus. The same agent may not.
+
+### 12.2 The stream
+
+All on the existing `GET /api/stream/:sessionId`, in this order for one run:
+
+| Message | Payload | Meaning |
+|---|---|---|
+| `structure_start` | `run_id`, `agent`, `focus_node_ids` | Run began. Draw anchor halos on the focus nodes. |
+| `ghost_chunk` (0..n) | `run_id`, `frames[]`, `nodes[]`, `edges[]` | One piece: a lone node, or a whole frame with its nodes, plus the edges ready to draw. |
+| `structure_done` | `run_id`, `thread_id`, `turn_index` | Finished and saved. |
+| `structure_error` | `run_id`, `reason` | Failed. **Discard every ghost of this `run_id`**, even if chunks already arrived. `reason` is safe to show. |
+
+```ts
+GhostFrame = { ghost_id, content }                          // a box around 2+ nodes; content says how they relate
+GhostNode  = { ghost_id, content, frame_id | null, depth }  // depth 1 = first level
+GhostEdge  = { from, to, label | null }                     // from/to = a real node uuid OR a ghost id
+```
+
+- All ids are real: node UUIDs for existing nodes, backend-minted `ghost_id`s for ghosts. The model's own ids never reach you.
+- Edge direction: `from` = parent, `to` = child, same as `edges.from_node_id` / `to_node_id`.
+- A frame arrives once, whole, together with all its nodes. Frames hold nodes only.
+- **Depth:** show `depth 1` first. Clicking a ghost reveals the ghosts one level deeper that are linked to it. Everything is already
+  delivered, so there is no extra call. A node reachable two ways takes the shorter depth.
+- Edges have no type anymore, only an optional free-text `label` (your `edges` inserts must stop sending `edge_type`; the column is dropped).
+
+### 12.3 Accepting and rejecting: `POST /api/ghost-status`
+
+The user decides about ONE ghost node at a time. (The old pair payload with `context_node_status` is gone: it answers 400.)
+
+```json
+{ "thread_id": "uuid", "turn_index": 3, "canvas_id": "uuid", "session_id": "uuid",
+  "ghost_id": "uuid", "status": "accepted" | "rejected",
+  "subtree_action": "delete" | "save_off",        // only for a reject that leaves other ghosts hanging
+  "rejection_reason": "free text" | null,          // optional
+  "interacted_at": 1730000000000 }
+```
+`thread_id` + `turn_index` come from `structure_done`.
+
+- **Accept** is per node. You write the accepted node to Supabase yourself (using its `ghost_id` as the node id) and send the
+  usual `ghost.accepted` canvas-event, as today. This endpoint only records the decision.
+- **Reject** may leave ghost nodes hanging: the ones that were connected to the canvas only *through* the rejected node (a node with
+  another surviving parent is not affected). If there are any and `subtree_action` is missing, the answer is
+  **400 `{ code: "subtree_action_required", subtree: [ghost_id, ...] }`**: ask the user, then send again with
+  - `delete`: the subtree is removed with the node, or
+  - `save_off`: the subtree is kept, **unconnected**. Each saved-off node can later be accepted on its own (it lands on the canvas
+    unconnected; the user draws edges by hand) or rejected on its own.
+- A reject with no subtree needs no question.
+- Hidden children of an **accepted** node stay pending until the user acts on them.
+- Success: **200 `{ ok, turn_status, changed: [{ ghost_id, status }] }`**. `status` is one of `accepted | rejected | saved_off | deleted`;
+  `changed` lists the node plus anything its reject deleted or saved off. `turn_status` is `pending` while a **first-level (depth 1)**
+  ghost waits, so deeper unopened ghosts never block the agent. When it is no longer `pending`, the agent can run on that focus again.
+- Errors: `400` unknown `ghost_id` / no structure at `turn_index` / `subtree_action_required`, `404` thread not found (or not this
+  canvas), `409` the node was already decided.
+- **Learning:** only the node the user actually rejected can teach the agent, never the children deleted or saved off with it. A
+  rejection with no reason records the outcome and teaches nothing. Free-text reasons are recorded but start teaching in the
+  Rejection Insights rework (story slice 4); today only the three legacy reasons (`too_abstract`, `too_technical`, `skip_for_now`) fire the learning.
+
+### 12.4 Edge labels
+
+`edges.label` (free text, up to 80 characters in the UI) is the only edge description. It is shown to agents on the edge.

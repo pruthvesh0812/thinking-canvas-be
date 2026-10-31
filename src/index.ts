@@ -13,12 +13,12 @@ import { streamRoute } from './routes/stream.js'
 import { ghostStatusRoute } from './routes/ghost-status.js'
 import { sessionRoute } from './routes/session.js'
 import { stripeRoute } from './routes/stripe.js'
+import { agentRunRoute } from './routes/agent-run.js'
 
 // Inngest pipeline functions
-import { articulatorPipeline } from './pipeline/articulator-pipeline.js'
-import { outerSubPipeline } from './pipeline/outer-sub-pipeline.js'
 import { rejectionInsightsPipeline } from './pipeline/rejection-insights.js'
 import { sessionCompletePipeline } from './pipeline/session-complete.js'
+import { runAgentPipeline } from './pipeline/run-agent.js'
 
 const app = new Hono()
 
@@ -34,14 +34,14 @@ app.route('/api', streamRoute)
 app.route('/api', ghostStatusRoute)
 app.route('/api', sessionRoute)
 app.route('/api', stripeRoute)
+app.route('/api', agentRunRoute)
 // Inngest worker — all pipeline functions registered here.
 const inngestHandler = inngestServe({
   client: inngest,
   functions: [
-    articulatorPipeline,
-    outerSubPipeline,
     rejectionInsightsPipeline,
     sessionCompletePipeline,
+    runAgentPipeline,
   ],
 })
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', (c) => inngestHandler(c))

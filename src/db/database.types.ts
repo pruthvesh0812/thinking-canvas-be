@@ -34,6 +34,80 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_runs: {
+        Row: {
+          agent: string
+          canvas_id: string
+          context_snapshot: string | null
+          context_tokens: number | null
+          created_at: string
+          error: string | null
+          finished_at: string | null
+          focus_node_ids: string[]
+          id: string
+          loaded_nodes: Json | null
+          outcome: Json | null
+          output: Json | null
+          referenced_node_ids: string[] | null
+          scope: string | null
+          session_id: string | null
+          source_id: string
+          source_type: string
+          status: string
+          thread_id: string | null
+        }
+        Insert: {
+          agent: string
+          canvas_id: string
+          context_snapshot?: string | null
+          context_tokens?: number | null
+          created_at?: string
+          error?: string | null
+          finished_at?: string | null
+          focus_node_ids?: string[]
+          id?: string
+          loaded_nodes?: Json | null
+          outcome?: Json | null
+          output?: Json | null
+          referenced_node_ids?: string[] | null
+          scope?: string | null
+          session_id?: string | null
+          source_id: string
+          source_type: string
+          status?: string
+          thread_id?: string | null
+        }
+        Update: {
+          agent?: string
+          canvas_id?: string
+          context_snapshot?: string | null
+          context_tokens?: number | null
+          created_at?: string
+          error?: string | null
+          finished_at?: string | null
+          focus_node_ids?: string[]
+          id?: string
+          loaded_nodes?: Json | null
+          outcome?: Json | null
+          output?: Json | null
+          referenced_node_ids?: string[] | null
+          scope?: string | null
+          session_id?: string | null
+          source_id?: string
+          source_type?: string
+          status?: string
+          thread_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_runs_canvas_id_fkey"
+            columns: ["canvas_id"]
+            isOneToOne: false
+            referencedRelation: "canvases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_threads: {
         Row: {
           active_rejection_insight_ids: string[]
@@ -406,7 +480,6 @@ export type Database = {
           both_existing: boolean
           canvas_id: string
           created_at: string
-          edge_type: string
           from_handle: string | null
           from_node_id: string
           id: string
@@ -419,7 +492,6 @@ export type Database = {
           both_existing?: boolean
           canvas_id: string
           created_at?: string
-          edge_type: string
           from_handle?: string | null
           from_node_id: string
           id?: string
@@ -432,7 +504,6 @@ export type Database = {
           both_existing?: boolean
           canvas_id?: string
           created_at?: string
-          edge_type?: string
           from_handle?: string | null
           from_node_id?: string
           id?: string

@@ -56,3 +56,22 @@ export async function getBothExistingEdges(canvas_id: string): Promise<Edge[]> {
   if (error) throw new Error(`getBothExistingEdges failed: ${error.message}`)
   return (data ?? []) as Edge[]
 }
+
+// Every edge that touches ANY of the given nodes (either end). Does NOT check
+// set-aside: the caller loads the nodes with getNodesByIds (which filters
+// set-aside) and drops edges whose other end did not come back.
+export async function getEdgesTouching(canvas_id: string, node_ids: string[]): Promise<Edge[]> {
+  // nothing to look for -> no query
+  if (node_ids.length === 0) return []
+
+  const idList = node_ids.join(',')
+  const { data, error } = await db
+    .from('edges')
+    .select('*')
+    .eq('canvas_id', canvas_id)
+    .or(`from_node_id.in.(${idList}),to_node_id.in.(${idList})`)
+    .order('created_at', { ascending: true })
+
+  if (error) throw new Error(`getEdgesTouching failed: ${error.message}`)
+  return (data ?? []) as Edge[]
+}

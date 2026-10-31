@@ -76,22 +76,6 @@ describe('createMarkerRouter — QUESTION split', () => {
   })
 })
 
-describe('createMarkerRouter — Articulator path', () => {
-  it('strips NODE_TYPE, keeps [ARTICULATION n] in-band, and never routes to a question ghost', () => {
-    const emits = run(
-      ['[NODE_TYPE: reframe]\n[ARTICULATION 1] a [ARTICULATION 2] b'],
-      { contextGhostId: CTX, questionGhostId: null }
-    )
-    expect(emits.filter((e) => e.type === 'node_type')).toEqual([
-      { type: 'node_type', target: CTX, node_type: 'reframe' },
-    ])
-    // [ARTICULATION n] is sub-structure of the single context node — left in-band.
-    expect(textFor(emits, CTX)).toBe('\n[ARTICULATION 1] a [ARTICULATION 2] b')
-    // No question ghost exists — nothing should target one.
-    expect(emits.some((e) => e.type === 'chunk' && (e as { target: string }).target !== CTX)).toBe(false)
-  })
-})
-
 describe('createMarkerRouter — raw fidelity', () => {
   it('preserves a bracket that is not a control marker', () => {
     const emits = run(['a [x] b'], { contextGhostId: CTX, questionGhostId: null })

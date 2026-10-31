@@ -37,15 +37,13 @@ export function buildSpawnDescriptor(params: {
       agent_role: params.agent_role,
     },
     context_edge: {
-      edge_type: 'logical',
       from: params.trigger_node_id,
       to: context_ghost_id,
     },
     ...(question_ghost_id && {
       question_node: { ghost_id: question_ghost_id, node_type: 'question' },
       question_edge: {
-        edge_type: 'logical',
-        from: context_ghost_id,
+          from: context_ghost_id,
         to: question_ghost_id,
       },
     }),

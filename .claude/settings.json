@@ -1,7 +1,7 @@
 {
   "_comments": {
     "defaultMode": "acceptEdits — Claude writes and edits files without a per-file confirmation prompt. Intentional for a dev-agent workflow: the engineer controls scope through /gatekeeper + /approve before any code is written, so per-file prompts add friction without safety benefit. Change to 'askEdits' if you want a confirmation step before every Write/Edit call.",
-    "hooks": "PreToolUse: guardrail_check.sh runs before every Bash call — applies regex deny/ask patterns and enforces session cost limits ($3 warn / $5 hard stop). Stop: cost_tracker.sh runs once per assistant turn (Stop event) — tries usage.cost_usd, message.usage.cost_usd, then estimates from token counts (Sonnet 4.6 pricing) as fallback. Writes cumulative + per-turn data to ~/.claude/sessions/{session_id}.json and a .current pointer for /cost lookups. Debug: first few payloads logged to /tmp/claude_cost_debug.log — check there if cost still shows 0.",
+    "hooks": "PreToolUse: guardrail_check.sh runs before every Bash call — applies regex deny/ask patterns and enforces session cost limits ($3 warn / $5 hard stop). Stop: cost_tracker.sh runs once per assistant turn (Stop event) — tries usage.cost_usd, message.usage.cost_usd, then estimates from token counts (Sonnet 4.6 pricing) as fallback. Writes cumulative + per-turn data to ~/.claude/sessions/{session_id}.json and a .current pointer for /cost lookups. Debug: first few payloads logged to /tmp/claude_cost_debug.log — check there if cost still shows 0. PostToolUse: after-git-commit.sh runs after a successful Bash `git commit` and reminds Claude to run the code-alignment skill (plain-language feature doc + short comprehension check). Silent for every other command.",
     "permissions_model": "deny = blocked outright, no override. ask = Claude pauses and requires engineer confirmation before proceeding. allow = whitelisted, no prompt shown. Patterns in settings.json are matched literally. Regex-based checks that settings.json cannot express are in guardrail_check.sh."
   },
   "permissions": {
@@ -119,6 +119,18 @@
           {
             "type": "command",
             "command": ".claude/hooks/cost_tracker.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/after-git-commit.sh",
+            "timeout": 10
           }
         ]
       }

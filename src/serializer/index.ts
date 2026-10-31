@@ -67,6 +67,12 @@ function ghostSymbol(status: GhostStatus): string {
   }
 }
 
+// Arrow between two nodes in the prompt text. Shows the user's edge label if
+// there is one, otherwise a plain arrow. (Edges have no type anymore.)
+function edgeArrow(label: string | null): string {
+  return label ? `──${label}──▶` : '──▶'
+}
+
 // Renders a node reference for an edge line. seqMap only covers nodes that
 // triggered a turn in THIS agent's own thread, so a canvas node the agent has
 // never responded to has no seq — fall back to a short id rather than a bare
@@ -112,7 +118,7 @@ function formatEdgeLines(
     const flag = e.id === highlightEdgeId ? ' ★NEW' : ''
     lines.push(
       `INCOMING: [${nodeRef(e.from_node_id, seqMap)} | ${src?.direction_marker ?? '?'}]` +
-      ` ──${e.edge_type}──▶ "${nodeText(src)}"${flag}`
+      ` ${edgeArrow(e.label)} "${nodeText(src)}"${flag}`
     )
   }
 
@@ -126,7 +132,7 @@ function formatEdgeLines(
       const dst = nodeMap.get(e.to_node_id)
       const flag = e.id === highlightEdgeId ? ' ★NEW' : ''
       lines.push(
-        `OUTGOING: ──${e.edge_type}──▶ [${nodeRef(e.to_node_id, seqMap)} | ${dst?.direction_marker ?? '?'}]` +
+        `OUTGOING: ${edgeArrow(e.label)} [${nodeRef(e.to_node_id, seqMap)} | ${dst?.direction_marker ?? '?'}]` +
         ` "${nodeText(dst)}"${flag}`
       )
     }
@@ -323,7 +329,7 @@ function formatTier3(
   // Step 3 — Compact single-line edge notation (saves tokens vs. multi-line format).
   const inc = edges.filter(e => e.to_node_id === nodeId)
   const out = edges.filter(e => e.from_node_id === nodeId)
-  const incStr = inc.map(e => `seq:${seqMap.get(e.from_node_id) ?? '?'} ──${e.edge_type}──▶`).join(' ')
+  const incStr = inc.map(e => `seq:${seqMap.get(e.from_node_id) ?? '?'} ${edgeArrow(e.label)}`).join(' ')
   const outStr = out.map(e => `──▶ seq:${seqMap.get(e.to_node_id) ?? '?'}`).join(' ')
   if (inc.length || out.length) {
     lines.push(`INCOMING: ${incStr || 'none'} | OUTGOING: ${outStr || 'none'}`)
@@ -371,7 +377,7 @@ function formatTier4Group(items: Tier4Item[]): string {
     const marker = it.node?.direction_marker ?? '?'
     const nodeId = 'node_id' in it.msg && it.msg.node_id ? it.msg.node_id : ''
     const out = it.edges.filter(e => e.from_node_id === nodeId)
-    const arrow = out.length > 0 ? ` ──${out[0].edge_type}──▶ seq:${it.seqMap.get(out[0].to_node_id) ?? '?'}` : ''
+    const arrow = out.length > 0 ? ` ${edgeArrow(out[0].label)} seq:${it.seqMap.get(out[0].to_node_id) ?? '?'}` : ''
     lines.push(`[seq:${it.seq} | ${marker}]${arrow}`)
 
     if (it.assistantMsg) {

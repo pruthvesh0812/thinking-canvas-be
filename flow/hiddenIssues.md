@@ -1,0 +1,80 @@
+# Hidden issues
+
+Things found while walking the code that fail quietly, or can trap a user, and are NOT fixed yet.
+One entry per issue. Add the date, where it lives, what really happens, and a suggested fix. Fix them in one go later.
+
+Status values: `open`, `fixed (commit)`, `wontfix (why)`.
+
+---
+
+## 1. Route: every unexpected error becomes a flat `500` with no detail
+
+- **Found:** 2026-10-31, walking Stone 1 (`agentRunRoute`)
+- **Where:** `src/routes/agent-run.ts:39-42` (also the same shape in `src/routes/ghost-status.ts`)
+- **What happens:** if anything throws inside `handleAgentRun` (database down, a bug), the route catches it and answers
+  `{ "error": "internal error" }` with status 500. Expected failures (bad payload, already running) are fine: they come back as
+  proper 4xx from the handler. Only the unexpected ones are silent.
+- **Why it matters:** the frontend cannot tell "try again" from "this will never work", and the only trace is one log line.
+  The log keeps `error.message` only, not the stack, so finding the real cause is slow.
+- **Suggested fix:** log the stack too; include a short request id in the 500 body and the log line so a user report can be matched
+  to a log; (optional) let the handler return a `retryable` flag for known transient errors.
+- **Status:** open
+
+## 2. Route: malformed JSON looks like a "missing field" error
+
+- **Found:** 2026-10-31, Stone 1
+- **Where:** `src/routes/agent-run.ts:20` (`await c.req.json().catch(() => null)`), same pattern in `ghost-status.ts`
+- **What happens:** a body that is not valid JSON is turned into `null`, then Zod fails on `null` and the user gets
+  `400 invalid payload` with issues like "expected object, received null". That points at the wrong problem.
+- **Suggested fix:** answer a clear `400 { error: "body is not valid JSON" }` before validating.
+- **Status:** open
+
+## 3. A run can be stuck `queued` forever, which locks the agent on that focus
+
+- **Found:** 2026-10-31, while reading Stone 1 and the handler it calls
+- **Where:** `src/routes/agent-run-handler.ts:72-75`. `createRun` saves the run as `queued`, THEN `sendRunRequested` sends the Inngest event.
+- **What happens:** if the send fails (Inngest down, network), the handler throws, the route answers 500, but the run row stays
+  `queued`. `canAgentFire` counts `queued` as active (`src/db/agent-runs.ts:43`), so that agent is refused on that focus (`409 run_in_progress`)
+  until someone fixes the row by hand. No worker will ever pick it up, because no event exists.
+- **Suggested fix:** if the send throws, mark the run `failed` before rethrowing (or send first inside a transaction-like order);
+  AND add an expiry: treat a run as inactive if it has been `queued`/`running` longer than a limit (see issue 4).
+- **Status:** open
+
+## 4. A run can be stuck `running` forever if the worker dies mid-run
+
+- **Found:** 2026-10-31, same reading
+- **Where:** `src/pipeline/execute-run.ts`. Normal failures are caught and the run is marked `failed`, but a process crash, a redeploy
+  or a killed worker never reaches that code. The Inngest function has `retries: 0` on purpose (`src/pipeline/run-agent.ts`), so nothing re-runs it.
+- **What happens:** the row stays `running`, and `canAgentFire` blocks that agent on that focus with `409 run_in_progress`.
+- **Suggested fix:** a staleness rule in `getActiveRuns` / `whyBlocked` (a run older than N minutes does not block), and/or a small
+  cleanup job that marks stale `queued`/`running` rows `failed`. Pick N from the real model latency.
+- **Status:** open
+
+## 5. Two requests at the same instant can both pass the lock
+
+- **Found:** 2026-10-31, walking Stone 3 (`canAgentFire`)
+- **Where:** `src/routes/agent-run-handler.ts:67-75`. The check (`canAgentFire`, step 7) and the insert (`createRun`, step 8) are two separate steps.
+- **What happens:** if two requests for the same agent and focus arrive almost together (a double click, a retry), both can run the check
+  before either has saved its run. Both see "nothing active", both pass, both create a run. The result is two runs for the same agent on the
+  same focus, and two answers streaming over each other. (Inngest's concurrency key `canvas_id + agent`, limit 1, only makes the second run
+  wait for the first. It does not stop the second from being created.)
+- **How likely:** low for one user on one canvas, but a double click or an automatic frontend retry on a slow response makes it real.
+- **Suggested fix:** make check-and-insert one atomic step, for example a database function or a unique partial index that allows only one
+  `queued`/`running` run per canvas + agent + focus; the loser gets the same 409. Alternatively reject duplicate requests in the frontend,
+  but the server should be the one that guarantees it.
+- **Status:** open
+
+## 6. The worker never checks the run is still wanted
+
+- **Found:** 2026-10-31, walking Stone 4 (`runAgentPipeline`)
+- **Where:** `src/pipeline/run-agent.ts:66-72` and the start of `executeAgentRun` (`src/pipeline/execute-run.ts`). It only checks that the run
+  row exists and is still `queued`.
+- **What happens:** between the request being accepted (Stone 2 validated the focus and source) and the worker starting, the user may have
+  deleted or set aside the node, or deleted the invoking note. The worker still starts: it marks the run `running`, sends `structure_start`
+  to the frontend, and only later fails when it cannot read the text or the focus. The user sees a run begin and then an error, and the run log
+  ends as `failed` for a reason that was knowable before starting.
+- **Suggested fix:** at the very start of `executeAgentRun`, before `markRunning` and `structure_start`, re-check that the focus nodes and the
+  invoking text still exist on the canvas. If not, mark the run `failed` (or `cancelled`) quietly and do not announce a start.
+  (Cheap: the two reads are the same ones the handler and retrieval already do.)
+- **Status:** open
+
