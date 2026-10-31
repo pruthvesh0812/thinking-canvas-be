@@ -49,3 +49,17 @@ Status values: `open`, `fixed (commit)`, `wontfix (why)`.
 - **Suggested fix:** a staleness rule in `getActiveRuns` / `whyBlocked` (a run older than N minutes does not block), and/or a small
   cleanup job that marks stale `queued`/`running` rows `failed`. Pick N from the real model latency.
 - **Status:** open
+
+## 5. Two requests at the same instant can both pass the lock
+
+- **Found:** 2026-10-31, walking Stone 3 (`canAgentFire`)
+- **Where:** `src/routes/agent-run-handler.ts:67-75`. The check (`canAgentFire`, step 7) and the insert (`createRun`, step 8) are two separate steps.
+- **What happens:** if two requests for the same agent and focus arrive almost together (a double click, a retry), both can run the check
+  before either has saved its run. Both see "nothing active", both pass, both create a run. The result is two runs for the same agent on the
+  same focus, and two answers streaming over each other. (Inngest's concurrency key `canvas_id + agent`, limit 1, only makes the second run
+  wait for the first. It does not stop the second from being created.)
+- **How likely:** low for one user on one canvas, but a double click or an automatic frontend retry on a slow response makes it real.
+- **Suggested fix:** make check-and-insert one atomic step, for example a database function or a unique partial index that allows only one
+  `queued`/`running` run per canvas + agent + focus; the loser gets the same 409. Alternatively reject duplicate requests in the frontend,
+  but the server should be the one that guarantees it.
+- **Status:** open

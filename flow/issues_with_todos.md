@@ -34,3 +34,19 @@ Status values: `open`, `fixed (commit)`.
   the reason and the lock is released) and return a 500 to the caller. Add a handler test: `sendRunRequested` throws, then the run is not
   left `queued` and the status is 500.
 - **Status:** open
+
+## 3. The 409 does not say WHY the agent is blocked
+
+- **Added:** 2026-10-31 (walkthrough, Stone 3)
+- **Where:** `src/lib/guards.ts:10-32` (`canAgentFire` drops the reason and returns only true/false),
+  `src/routes/agent-run-handler.ts:67-69` (always answers the same 409 message)
+- **Issue:** `whyBlocked` knows which of two reasons applies: `run_in_progress` (a run is still going) or
+  `ghosts_pending` (earlier ghosts are still undecided). The caller never sees it. The frontend gets one generic
+  409 and cannot tell the user the right thing: "wait, it's running" versus "accept or reject the earlier ghosts first".
+- **TODO:** tell the frontend the reason.
+  - Make `canAgentFire` return the reason (for example `{ allowed: false, reason }`) instead of a bare boolean.
+  - Include it in the 409 body as a `code` field (`run_in_progress` or `ghosts_pending`), keeping a human-readable `error` text.
+  - Update `FRONTEND-CONTRACT.md` §12.1 so the frontend shows the matching message:
+    `ghosts_pending` -> "Accept or reject the earlier response first", `run_in_progress` -> "Still working on it".
+  - Add handler tests for both codes.
+- **Status:** open
