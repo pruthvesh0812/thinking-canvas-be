@@ -69,3 +69,21 @@ Status values: `open`, `fixed (commit)`.
   - Add a test that two runs with different focus produce different keys and the same focus the same key (extract the key builder to a small pure function).
 - **Status:** open
 
+
+## 5. `session_id ?? ''` in the run worker could publish to an empty channel
+
+- **Added:** 2026-10-31 (walkthrough, Stone 5)
+- **Priority: Low**
+- **Why Low:** it cannot realistically happen today.
+  - The handler checks `session.canvas_id === canvas.id` before the run is created, so the run starts with a real session id.
+  - `agent_runs.session_id` only becomes NULL if the session row itself is deleted while the canvas still exists
+    (the column is `ON DELETE SET NULL`). Nothing in the code deletes sessions (`closeSession` only sets a status), and
+    `nodes.session_id` / `edges.session_id` reference sessions with no cascade, so the database refuses to delete a session that has
+    nodes or edges. If the whole canvas is deleted, the run row is deleted too, so the worker finds no run and skips.
+  - The `?? ''` is only there to satisfy TypeScript, because the column is declared nullable.
+- **Where:** `src/pipeline/execute-run.ts:70` (`const sessionId = run.session_id ?? ''`)
+- **Issue:** if `session_id` were ever NULL, the worker would publish every message to the channel `canvas:stream:` (empty session id).
+  Nobody listens there, so the whole run would stream into the void and the user would see nothing, with no error.
+- **TODO:** a tiny hardening, one line: replace `?? ''` with an explicit failure. If `run.session_id` is null, fail the run with a clear error
+  (and skip publishing) so a null can never silently publish to an empty channel. Optionally add a test: a run with `session_id: null` fails with that error.
+- **Status:** open
