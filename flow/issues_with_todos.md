@@ -87,3 +87,22 @@ Status values: `open`, `fixed (commit)`.
 - **TODO:** a tiny hardening, one line: replace `?? ''` with an explicit failure. If `run.session_id` is null, fail the run with a clear error
   (and skip publishing) so a null can never silently publish to an empty channel. Optionally add a test: a run with `session_id: null` fails with that error.
 - **Status:** open
+
+## 6. A focus node deleted after the request just disappears, and the frontend is never told
+
+- **Added:** 2026-10-31 (walkthrough, Stone 6)
+- **Where:** `src/context/retrieve-s1.ts:42-46`. It throws only when NONE of the focus nodes can be loaded (line 43). The worker also
+  does not re-check the focus before announcing the run (see `hiddenIssues.md` issue 6).
+- **Issue:** the handler (Stone 2) checks that every focus node exists when the request is accepted. If one of them is deleted or set aside
+  before the worker retrieves, `retrieveS1` silently carries on with the rest and the answer is built for fewer nodes than the user
+  asked about. The user is never told that part of their focus was dropped. (If ALL are gone, the run fails, but with a generic
+  "could not produce a usable answer".)
+- **TODO:** the error must be conveyed to the frontend.
+  - In `retrieveS1`, when some focus nodes are missing, do not drop them silently: either fail the run with a specific error, or carry on and
+    report which ones were dropped (decide which; failing is simpler and safer).
+  - Make that reason reach the frontend: the `structure_error` message today carries one generic text. Add a machine-readable
+    `code` (for example `focus_node_gone`) plus the ids, so the frontend can say "the node you asked about was deleted".
+  - Update `FRONTEND-CONTRACT.md` §12.2 and add tests (partial focus missing, all focus missing).
+- **Related:** `hiddenIssues.md` issue 6 (worker never checks the run is still wanted). Fixing that check at the start of the run covers the
+  same case earlier, before `structure_start`.
+- **Status:** open
