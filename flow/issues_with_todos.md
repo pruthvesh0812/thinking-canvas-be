@@ -50,3 +50,22 @@ Status values: `open`, `fixed (commit)`.
     `ghosts_pending` -> "Accept or reject the earlier response first", `run_in_progress` -> "Still working on it".
   - Add handler tests for both codes.
 - **Status:** open
+
+## 4. The run-agent concurrency key ignores the focus nodes, so the same agent on a DIFFERENT focus has to wait
+
+- **Added:** 2026-10-31 (walkthrough, Stone 4)
+- **Where:** `src/pipeline/run-agent.ts:63` (`concurrency: { key: 'event.data.canvas_id + "-" + event.data.agent', limit: 1 }`)
+  versus `src/lib/block-rules.ts` (`whyBlocked` / `focusOverlaps`), which the handler uses.
+- **Issue:** the handler's lock is per canvas + agent + focus: it only refuses a run whose focus OVERLAPS a run already going, so the same
+  agent may run at the same time on different nodes. The worker's concurrency key is only canvas + agent, with limit 1. So a second run of
+  the same agent on a different focus is accepted by the handler (202) but then waits in Inngest behind the first run, even though it was
+  allowed to run in parallel. The two layers disagree. (The story originally chose canvas + agent; the later rule "same agent, different focus
+  is fine" was decided at the handler and never carried over here.)
+- **TODO:** put the focus into the concurrency key.
+  - Add a `focusKey` to the event data: the sorted focus node ids joined together, or the word `canvas` when the focus is empty (canvas-wide).
+  - Key becomes canvas + agent + focusKey, still limit 1.
+  - The handler lock already refuses overlapping focus sets, so an exact-match key is enough for the worker: two runs with different
+    focus sets can then run in parallel.
+  - Add a test that two runs with different focus produce different keys and the same focus the same key (extract the key builder to a small pure function).
+- **Status:** open
+

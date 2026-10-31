@@ -75,3 +75,14 @@ The older code (db layer, serializer, pipelines from before this branch) is most
 4. Update `FRONTEND-CONTRACT.md` §12 and the Expander system prompt examples in the same commit.
 5. Run all tests; the prompt-example test and the snapshot test will catch prompt/schema drift.
 6. Update the frontend contract note so the frontend repo builds against the new names from day one.
+
+## Names of things (not fields)
+
+| Now | Becomes | Where |
+|---|---|---|
+| `realDeps` | `executionDependencies` | `src/pipeline/run-agent.ts` (added 2026-10-31, walkthrough Stone 4) |
+
+Same family, for consistency when we do the rename (suggestion, not decided): `ExecuteRunDeps` -> `ExecuteRunDependencies`,
+`AgentRunDeps` -> `AgentRunDependencies`, `GhostStatusDeps` -> `GhostStatusDependencies`, `RealCanvasDeps` -> `RealCanvasDependencies`,
+and the `deps` parameter -> `dependencies`.
+

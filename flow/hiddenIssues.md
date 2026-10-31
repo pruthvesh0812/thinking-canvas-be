@@ -63,3 +63,18 @@ Status values: `open`, `fixed (commit)`, `wontfix (why)`.
   `queued`/`running` run per canvas + agent + focus; the loser gets the same 409. Alternatively reject duplicate requests in the frontend,
   but the server should be the one that guarantees it.
 - **Status:** open
+
+## 6. The worker never checks the run is still wanted
+
+- **Found:** 2026-10-31, walking Stone 4 (`runAgentPipeline`)
+- **Where:** `src/pipeline/run-agent.ts:66-72` and the start of `executeAgentRun` (`src/pipeline/execute-run.ts`). It only checks that the run
+  row exists and is still `queued`.
+- **What happens:** between the request being accepted (Stone 2 validated the focus and source) and the worker starting, the user may have
+  deleted or set aside the node, or deleted the invoking note. The worker still starts: it marks the run `running`, sends `structure_start`
+  to the frontend, and only later fails when it cannot read the text or the focus. The user sees a run begin and then an error, and the run log
+  ends as `failed` for a reason that was knowable before starting.
+- **Suggested fix:** at the very start of `executeAgentRun`, before `markRunning` and `structure_start`, re-check that the focus nodes and the
+  invoking text still exist on the canvas. If not, mark the run `failed` (or `cancelled`) quietly and do not announce a start.
+  (Cheap: the two reads are the same ones the handler and retrieval already do.)
+- **Status:** open
+
